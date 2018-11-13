@@ -3,3 +3,6 @@
 obj_opt/
 *.cfg
 __pycache__/
+mcpat/
+interfaces/cacheResults/
+interfaces/cacheConfigs/

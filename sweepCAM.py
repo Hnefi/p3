@@ -1,6 +1,6 @@
 import argparse
-from invoker import Invoker
-from cacti_interface import CactiInterface
+from parallel import Invoker
+from interfaces import CactiInterface
 
 def main():
     parser = argparse.ArgumentParser()
