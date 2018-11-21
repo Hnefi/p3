@@ -3,13 +3,15 @@
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
-from scipy.special import binom as BinomCoefficient
-from LatencyTracker import ExactLatencyTracker
-#from hdrh.histogram import HdrHistogram
-
-from .simpySrc.src.simpy import Environment,Interrupt
-from .simpySrc.src.simpy.resources.resource import FiniteQueueResource
 import argparse
+from scipy.special import binom as BinomCoefficient
+from .LatencyTracker import ExactLatencyTracker
+
+# Relative path required to have ./p3 and ./my_simpy in same dir
+import sys
+sys.path.append("..")
+from my_simpy.src.simpy import Environment,Interrupt
+from my_simpy.src.simpy.resources.resource import FiniteQueueResource
 
 ThroughputBytesPerSecond = 128e9 # full duplex
 BytesPerPacket = 64
@@ -183,28 +185,3 @@ def simulate(argsFromInvoker):
     poissonGen = RPCGenerator(env,args.LambdaArrivalRate,theirNAMES,latencyStore,args.NumRPCs,args.FractionShortRPCs,NonInlineScanQuery)
     env.run()
     printServiceTimes(latencyStore)
-
-def main():
-    parser = argparse.ArgumentParser(description='Run a M/M/k/N queueing sim.')
-    parser.add_argument('-k','--NumberOfCores', dest='NumberOfCores', type=int, default=1,help='Number of servers to assume in the simulation (k in Kendall\'s notation)')
-    parser.add_argument('-l','--Lambda', dest='LambdaArrivalRate', type=float, default=1,help='Lambda arrival rate of the simulation')
-    parser.add_argument('-N', '--NumSlots', dest='NumQueueSlots', type=int, default=1,help='Max number of slots in the shared queue.')
-    parser.add_argument('-n', '--N_rpcs', dest='NumRPCs', type=int, default=1,help='Number of RPCS/messages/jobs to simulate.')
-    parser.add_argument('-f', '--frac_short',dest='FractionShortRPCs', type=float, default=1.0,help='Fraction of RPCs that will be considered "short".')
-
-    args = parser.parse_args()
-    print('Simulating nCores = {}, Lambda = {}, QueueDepth = {}, and NRPCS = {}'.format(args.NumberOfCores,args.LambdaArrivalRate,args.NumQueueSlots,args.NumRPCs))
-
-    env = Environment()
-    # all measurements in range: [STime, 1000*STime], with a precision of 3 digits
-    #latencyStore = HdrHistogram(DEF_SERV_TIME-10 , DEF_SERV_TIME*1000, 5)
-    latencyStore = ExactLatencyTracker()
-    theirNAMES = Server(env,args.NumberOfCores,args.NumQueueSlots)
-    # pass number of events to the generator
-    poissonGen = RPCGenerator(env,args.LambdaArrivalRate,theirNAMES,latencyStore,args.NumRPCs,args.FractionShortRPCs,NonInlineScanQuery)
-    env.run()
-    printServiceTimes(latencyStore)
-
-if __name__ == "__main__":
-    main()
-

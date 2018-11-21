@@ -1,5 +1,5 @@
 from multiprocessing import Process, Queue
-from tailLatency_sim import simulate
+from .tlat_sim import simulate
 
 class SimpyInterface(Process):
     def __init__(self,*args):
