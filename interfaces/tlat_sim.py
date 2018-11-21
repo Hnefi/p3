@@ -40,6 +40,11 @@ def printServiceTimes(latStore):
     print("99th is:",latStore.get_value_at_percentile(99))
     print("99.9th is:",latStore.get_value_at_percentile(99.9))
 
+def getServiceTimes(latStore):
+    percentiles = [ 50, 95, 99, 99.9 ]
+    vals = [ latStore.get_value_at_percentile(p) for p in percentiles ]
+    return zip(percentiles,vals)
+
 def RandomVarForServTime():
     numHits = stats.binom.rvs(FirstLevelRolls,Prob_L1Hit)
     coeff = BinomCoefficient(FirstLevelRolls,numHits)
@@ -173,7 +178,7 @@ def simulate(argsFromInvoker):
     parser.add_argument('-n', '--N_rpcs', dest='NumRPCs', type=int, default=1,help='Number of RPCS/messages/jobs to simulate.')
     parser.add_argument('-f', '--frac_short',dest='FractionShortRPCs', type=float, default=1.0,help='Fraction of RPCs that will be considered "short".')
 
-    args = parser.parse_args(argsFromInvoker)
+    args = parser.parse_args(argsFromInvoker.split(' '))
     print('Simulating nCores = {}, Lambda = {}, QueueDepth = {}, and NRPCS = {}'.format(args.NumberOfCores,args.LambdaArrivalRate,args.NumQueueSlots,args.NumRPCs))
 
     env = Environment()
@@ -184,4 +189,4 @@ def simulate(argsFromInvoker):
     # pass number of events to the generator
     poissonGen = RPCGenerator(env,args.LambdaArrivalRate,theirNAMES,latencyStore,args.NumRPCs,args.FractionShortRPCs,NonInlineScanQuery)
     env.run()
-    printServiceTimes(latencyStore)
+    return getServiceTimes(latencyStore)
