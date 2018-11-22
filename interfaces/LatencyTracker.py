@@ -1,13 +1,22 @@
 from numpy import digitize, ceil
 from math import floor
 
+def add_or_increment_dict(d,k):
+    if k in d:
+        d[k] += 1
+    else:
+        d[k] = 1
+
 # Exact tail latency tracker
 class ExactLatencyTracker(object):
     def __init__(self):
         self.values = []
+        self.num_dropped = { }
 
-    def record_value(self,latency):
+    def record_value(self,latency,nTimes=0):
         self.values.append(latency)
+        if nTimes > 0:
+            add_or_increment_dict(self.num_dropped,nTimes)
 
     def get_value_at_percentile(self,percentile):
         if len(self.values) > 0:
@@ -16,6 +25,12 @@ class ExactLatencyTracker(object):
             return lsort[idx]
         else:
             return 0.0
+
+    def get_num_dropped(self):
+        ret = 0
+        for k,v in self.num_dropped.items():
+            ret += ( k * v )
+        return ret
 
 # Tail latency tracker, using bins and linear interpolation
 class BinLatencyTracker(object):

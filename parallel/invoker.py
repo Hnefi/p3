@@ -30,22 +30,27 @@ class Invoker(object):
 
         curProc = 0
         maxProc = self.numProcs
-        jobs_assigned = [ 0 for i in range(self.numProcs) ]
+        self.jobs_assigned = [ 0 for i in range(self.numProcs) ]
         for job in argrange:
-            if jobs_assigned[curProc] < jobsPerProc:
+            if self.jobs_assigned[curProc] < jobsPerProc:
                 self.queues[curProc].put(job,False) #dont block
-                jobs_assigned[curProc] += 1
+                self.jobs_assigned[curProc] += 1
             else:
                 curProc += 1
                 if curProc >= maxProc :
                     curProc = 0
                 self.queues[curProc].put(job,False) #dont block
-                jobs_assigned[curProc] += 1
+                self.jobs_assigned[curProc] += 1
 
-        self.processes = [ self.runTarg( kwargs,self.queues[count],jobs_assigned[count] ) for count in range(self.numProcs) ]
+        self.processes = [ self.runTarg( kwargs,self.queues[count],self.jobs_assigned[count] ) for count in range(self.numProcs) ]
 
-    def getDatafromObjectQueue(self,index):
-        pass
+    def getResultsFromQueue(self,index):
+        resultCount = 0
+        results = [ ]
+        while resultCount < self.jobs_assigned[index]:
+            results.append(self.queues[index].get())
+            resultCount += 1
+        return results
 
     def startProcs(self):
         for p in self.processes:

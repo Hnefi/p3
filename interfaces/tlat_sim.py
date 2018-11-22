@@ -45,6 +45,9 @@ def getServiceTimes(latStore):
     vals = [ latStore.get_value_at_percentile(p) for p in percentiles ]
     return zip(percentiles,vals)
 
+def getNumDropped(latStore):
+    return latStore.get_num_dropped()
+
 def RandomVarForServTime():
     numHits = stats.binom.rvs(FirstLevelRolls,Prob_L1Hit)
     coeff = BinomCoefficient(FirstLevelRolls,numHits)
@@ -79,6 +82,8 @@ class RPC(object):
         SLO = 10*self.getServiceTimeValue()
         Deadline = self.env.now + SLO
 
+        num_times_retried = 0
+
         while current_time < Deadline and not comp:
             #print("rpc",self.rid,"trying to request access, at time:",current_time)
             # queue waiting to get a core for service
@@ -89,7 +94,7 @@ class RPC(object):
                     #print("rpc",self.rid,"GOT access, at time:",current_time)
                     yield self.env.timeout(self.getServiceTimeValue())
                     total_time = self.env.now - before_queue
-                    self.latencyTracker.record_value(total_time)
+                    self.latencyTracker.record_value(total_time,num_times_retried)
                     #print("RPC",self.rid,"Finished @ time:",self.env.now)
                     comp = True
                 except Interrupt as exc:
@@ -98,21 +103,22 @@ class RPC(object):
                     else:
                         #print("RPC",self.rid,"overflowed the queue @ time:",self.env.now)
                         yield self.env.timeout(RTT)
+                        num_times_retried += 1
                         current_time = self.env.now
-
         if not comp:
             #print("RPC",self.rid,"never finished by SLO deadline. Supposed to start at:",before_queue)
-            self.latencyTracker.record_value(SLO)
+            self.latencyTracker.record_value(SLO,num_times_retried)
 
 class PointQuery(RPC):
     def __init__(self,env,dist,theirNAMES,latencyTracker,rid):
         super().__init__(env,dist,theirNAMES,latencyTracker,rid)
         self.name = "Point Query RPC"
         self.baseServiceTime = DEF_SERV_TIME
+        self.serviceTimeDist = stats.expon(scale=self.baseServiceTime)
         self.action = env.process(self.run())
 
     def getServiceTimeValue(self):
-        return self.baseServiceTime
+        return self.serviceTimeDist.rvs()
         #cacheHits = self.statsDist.rvs(FirstLevelRolls,Prob_L1Hit)
         #return self.baseServiceTime - ( (tMem - tL1)*cacheHits )
 
@@ -124,7 +130,7 @@ class InlineScanQuery(RPC):
         self.action = env.process(self.run())
 
     def getServiceTimeValue(self):
-        return self.baseServiceTime
+        return stats.expon.rvs(scale=self.baseServiceTime)
 
 class NonInlineScanQuery(RPC):
     def __init__(self,env,dist,theirNAMES,latencyTracker,rid):
@@ -134,7 +140,7 @@ class NonInlineScanQuery(RPC):
         self.action = env.process(self.run())
 
     def getServiceTimeValue(self):
-        return self.baseServiceTime
+        return stats.expon.rvs(scale=self.baseServiceTime)
 
 class Server(FiniteQueueResource):
     def __init__(self,env,numIndepServers,qdepth):
@@ -157,7 +163,7 @@ class RPCGenerator(object):
         while self.nRPCS > 0:
             if (self.nRPCS % PRINT_INTERVAL) == 0:
                 print('RPCs simulated:',self.numSimulated)
-                printServiceTimes(self.latencyStore)
+                #printServiceTimes(self.latencyStore)
             yield self.env.timeout(stats.expon.rvs(self.myLambda))
             #print("Generated new RPC at:",self.env.now)
             # binom generate for % of short queries
@@ -165,7 +171,7 @@ class RPCGenerator(object):
             if boolForShortQuery == 1:
                 myRPC = RPCFactory(PointQuery,self.env,stats.binom,self.server,self.latencyStore,self.numSimulated).construct()
             else:
-                myRPC = RPCFactory(NonInlineScanQuery,self.env,stats.binom,self.server,self.latencyStore,self.numSimulated).construct()
+                myRPC = RPCFactory(self.longQueryClassType,self.env,stats.binom,self.server,self.latencyStore,self.numSimulated).construct()
 
             self.nRPCS -= 1
             self.numSimulated += 1
@@ -179,7 +185,7 @@ def simulate(argsFromInvoker):
     parser.add_argument('-f', '--frac_short',dest='FractionShortRPCs', type=float, default=1.0,help='Fraction of RPCs that will be considered "short".')
 
     args = parser.parse_args(argsFromInvoker.split(' '))
-    print('Simulating nCores = {}, Lambda = {}, QueueDepth = {}, and NRPCS = {}'.format(args.NumberOfCores,args.LambdaArrivalRate,args.NumQueueSlots,args.NumRPCs))
+    #print('Simulating nCores = {}, Lambda = {}, QueueDepth = {}, and NRPCS = {}'.format(args.NumberOfCores,args.LambdaArrivalRate,args.NumQueueSlots,args.NumRPCs))
 
     env = Environment()
     # all measurements in range: [STime, 1000*STime], with a precision of 3 digits
@@ -189,4 +195,4 @@ def simulate(argsFromInvoker):
     # pass number of events to the generator
     poissonGen = RPCGenerator(env,args.LambdaArrivalRate,theirNAMES,latencyStore,args.NumRPCs,args.FractionShortRPCs,NonInlineScanQuery)
     env.run()
-    return getServiceTimes(latencyStore)
+    return [ getServiceTimes(latencyStore), getNumDropped(latencyStore) ]

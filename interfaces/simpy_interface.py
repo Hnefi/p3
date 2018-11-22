@@ -36,13 +36,14 @@ class SimpyInterface(Process):
         print("Thread", self.name, "starting work.")
         while len(jobs) > 0:
             strToPass = self.simpy_argstring
+            job_id = jobs.pop()
             if 'numservs' in self.mode:
-                addMe = '-k ' + str(jobs.pop())
+                addMe = '-k ' + str(job_id)
                 strToPass += addMe
             else:
-                addMe = '-NumSlots ' + str(jobs.pop())
+                addMe = '--NumSlots ' + str(job_id)
                 strToPass += addMe
 
             # Run it.
             output = simulate(strToPass)
-            print(*output)
+            self.workQ.put( {job_id : output}, False ) # nowait
