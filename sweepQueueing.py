@@ -22,8 +22,8 @@ def main():
         invokerArgs = { 'numProcs': int(args.threads),
                         'runnableTarg': SimpyInterface,
                         'mode': args.mode,
-                        'Lambda' : 1,
-                        'coreRange': range(500,1200,100),
+                        'Lambda' : 0.5,
+                        'coreRange': range(400,1000,50),
                         'NumSlots' : 0,
                         'N_rpcs' : args.n,
                         'frac_short' : 1 }
@@ -31,9 +31,9 @@ def main():
         invokerArgs = { 'numProcs': int(args.threads),
                         'runnableTarg': SimpyInterface,
                         'mode': args.mode,
-                        'Lambda' : 1,
-                        'NumberOfCores': 1000,
-                        'NumSlots' : range(0,500,20),
+                        'Lambda' : 0.5,
+                        'NumberOfCores': 1,
+                        'NumSlots' : range(0,5),
                         'N_rpcs' : args.n,
                         'frac_short' : 1 }
 

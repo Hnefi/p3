@@ -79,9 +79,9 @@ class RPC(object):
         # record start time
         before_queue = self.env.now
         current_time = before_queue
-        SLO = 10*self.getServiceTimeValue()
-        Deadline = self.env.now + SLO
-
+        sampledServiceTime = self.getServiceTimeValue()
+        SLO = 10*sampledServiceTime
+        Deadline = (self.env.now + SLO)
         num_times_retried = 0
 
         while current_time < Deadline and not comp:
@@ -92,7 +92,7 @@ class RPC(object):
                     yield req
                     # GOT their names, now can serve
                     #print("rpc",self.rid,"GOT access, at time:",current_time)
-                    yield self.env.timeout(self.getServiceTimeValue())
+                    yield self.env.timeout(sampledServiceTime)
                     total_time = self.env.now - before_queue
                     self.latencyTracker.record_value(total_time,num_times_retried)
                     #print("RPC",self.rid,"Finished @ time:",self.env.now)
@@ -107,7 +107,7 @@ class RPC(object):
                         current_time = self.env.now
         if not comp:
             #print("RPC",self.rid,"never finished by SLO deadline. Supposed to start at:",before_queue)
-            self.latencyTracker.record_value(SLO,num_times_retried)
+            self.latencyTracker.record_value(SLO*100,num_times_retried)
 
 class PointQuery(RPC):
     def __init__(self,env,dist,theirNAMES,latencyTracker,rid):
