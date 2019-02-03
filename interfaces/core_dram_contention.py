@@ -163,23 +163,23 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     args = parser.parse_args(argsFromInvoker.split(' '))
     env = Environment()
 
-    print('Doing BW',args.BWGbps,', lambda',args.LambdaArrivalRate)
 
     # 100ns to 100us, with a precision of 0.1%
     latencyStore = HdrHistogram(100, 100000, 3)
 
     # Number of connections per server
-    N_threads = args.servers * args.NumberOfCores
-    N_connections = N_threads * N_threads
+    #N_threads = args.servers * args.NumberOfCores
+    N_connections = args.servers * args.servers
     # Buffer space compared to LLC size
     BDP = float(args.BWGbps)/8.0 * 1000 # Gbps/8 * ns = bytes
     BufSpace = N_connections * BDP
     LLCSpace = 1.5e6*args.NumberOfCores # 1.5MB/core, Xeon Scalable
-    #print('BDP',BDP,'Buffer space',BufSpace,', LLC Size',LLCSpace)
 
     # Prob NI does DDIO into cache
     p_ddio = (float(LLCSpace) / BufSpace)*100
     #print('p_hit',p_ddio)
+
+    print('[NEW JOB: BW',args.BWGbps,', lambda',args.LambdaArrivalRate,'BDP',BDP,'Buffer space(MB)',BufSpace/1e6,', LLC Size(MB)',LLCSpace/1e6,'Prob DDIO hit',p_ddio,']')
 
     # Create N queues, one per DRAM channel
     if args.NumQueueSlots == -1:
