@@ -12,6 +12,7 @@ def main():
     parser.add_argument("--n", type=int,help="Number of rpcs to simulate",default = 10)
     parser.add_argument("--channels", type=int,help="Number of DRAM channels",default = 8)
     parser.add_argument("--cores", type=int,help="Number of cores/RPC servers",default = 8)
+    parser.add_argument("--nodes", type=int,help="Number of nodes in the whole system to consider.",default=1000)
     parser.add_argument("mem", help="Type of memory system (affects channel count and total BW)",choices=["DDR4","HBM"])
     args = parser.parse_args()
 
@@ -31,7 +32,7 @@ def main():
                             'NumberOfCores' : args.cores,
                             'BanksPerChannel' : 32,
                             'BWRange': linspace(10,1000,20),
-                            'Servers': 10000,
+                            'Servers': args.nodes,
                             'N_rpcs' : args.n
                             }
         else:
@@ -42,7 +43,7 @@ def main():
                             'NumberOfCores' : args.cores,
                             'BanksPerChannel' : 8,
                             'BWRange': linspace(40,800,20),
-                            'Servers': 1000,
+                            'Servers': args.nodes,
                             'N_rpcs' : args.n
                             }
 
