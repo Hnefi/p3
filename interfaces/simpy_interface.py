@@ -1,6 +1,7 @@
 from multiprocessing import Process, Queue
 from queue import Empty
 from .tlat_sim import simulate
+from .core_dram_contention import simulateAppAndNI_DRAM
 
 def conv_to_string(k,v):
     return "--" + str(k) + " " + str(v)
@@ -41,9 +42,15 @@ class SimpyInterface(Process):
                 addMe = '-k ' + str(job_id)
                 strToPass += addMe
             else:
-                addMe = '--NumSlots ' + str(job_id)
+                # job_id is a bandwidth
+                BytesPerPacket = 64
+                PacketInterarrival = 1/(float(job_id)/BytesPerPacket/8.0)
+                addMe = '--LambdaArrivalRate ' + str(PacketInterarrival)
+                strToPass += addMe
+                addMe = ' --Bandwidth ' + str(job_id)
                 strToPass += addMe
 
             # Run it.
-            output = simulate(strToPass)
+            output = simulateAppAndNI_DRAM(strToPass)
             self.workQ.put( {job_id : output}, False ) # nowait
+        print("Thread", self.name, "done all jobs.")

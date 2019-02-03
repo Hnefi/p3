@@ -17,9 +17,12 @@ class Invoker(object):
         if 'numservs' in kwargs['mode']:
             argrange = kwargs['coreRange']
             del kwargs['coreRange']
-        else:
+        elif 'numSlots' in kwargs['mode']:
             argrange = kwargs['NumSlots']
             del kwargs['NumSlots']
+        elif 'NI' in kwargs['mode']:
+            argrange = kwargs['BWRange']
+            del kwargs['BWRange']
 
         self.queues = [ Queue() for count in range(self.numProcs) ]
 

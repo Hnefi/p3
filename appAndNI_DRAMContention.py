@@ -5,12 +5,14 @@ import csv
 from parallel import Invoker
 from interfaces.simpy_interface import SimpyInterface
 
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["sweep_qdepth", "sweep_numservs"])
+    parser.add_argument("mode", choices=["sweep_NI"])
     parser.add_argument("--threads", type=int,help="Number of parallel threads to use",default = 1)
     parser.add_argument("--n", type=int,help="Number of rpcs to simulate",default = 10)
+    parser.add_argument("--channels", type=int,help="Number of DRAM channels",default = 8)
+    parser.add_argument("--cores", type=int,help="Number of cores/RPC servers",default = 8)
+    parser.add_argument("mem", help="Type of memory system (affects channel count and total BW)",choices=["DDR4","HBM"])
     args = parser.parse_args()
 
     def check_arg(arg, msg):
@@ -18,24 +20,31 @@ def main():
             parser.print_help()
             raise ValueError(msg)
 
-    if 'numservs' in args.mode:
-        invokerArgs = { 'numProcs': int(args.threads),
-                        'runnableTarg': SimpyInterface,
-                        'mode': args.mode,
-                        'Lambda' : 0.5,
-                        'coreRange': range(300,1000,50),
-                        'NumSlots' : 0,
-                        'N_rpcs' : args.n,
-                        'frac_short' : 1 }
-    else:
-        invokerArgs = { 'numProcs': int(args.threads),
-                        'runnableTarg': SimpyInterface,
-                        'mode': args.mode,
-                        'Lambda' : 0.5,
-                        'NumberOfCores': 650,
-                        'NumSlots' : range(0,10000,200),
-                        'N_rpcs' : args.n,
-                        'frac_short' : 1 }
+    from numpy import linspace
+
+    if 'NI' in args.mode:
+        if 'HBM' in args.mem:
+            invokerArgs = { 'numProcs': int(args.threads),
+                            'mode': args.mode,
+                            'runnableTarg': SimpyInterface,
+                            'NumberOfChannels' : args.channels,
+                            'NumberOfCores' : args.cores,
+                            'BanksPerChannel' : 32,
+                            'BWRange': linspace(10,1000,20),
+                            'Servers': 10000,
+                            'N_rpcs' : args.n
+                            }
+        else:
+            invokerArgs = { 'numProcs': int(args.threads),
+                            'mode': args.mode,
+                            'runnableTarg': SimpyInterface,
+                            'NumberOfChannels' : args.channels,
+                            'NumberOfCores' : args.cores,
+                            'BanksPerChannel' : 8,
+                            'BWRange': linspace(40,800,20),
+                            'Servers': 1000,
+                            'N_rpcs' : args.n
+                            }
 
     threadController = Invoker( **invokerArgs )
     threadController.startProcs()

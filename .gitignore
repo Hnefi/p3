@@ -6,3 +6,4 @@ __pycache__/
 mcpat/
 interfaces/cacheResults/
 interfaces/cacheConfigs/
+*.csv
