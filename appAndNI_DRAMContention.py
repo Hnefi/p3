@@ -8,12 +8,13 @@ from interfaces.simpy_interface import SimpyInterface
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["sweep_NI"])
+    parser.add_argument("mem", help="Type of memory system (affects channel count and total BW)",choices=["DDR4","HBM"])
     parser.add_argument("--threads", type=int,help="Number of parallel threads to use",default = 1)
     parser.add_argument("--n", type=int,help="Number of rpcs to simulate",default = 10)
     parser.add_argument("--channels", type=int,help="Number of DRAM channels",default = 8)
     parser.add_argument("--cores", type=int,help="Number of cores/RPC servers",default = 8)
     parser.add_argument("--nodes", type=int,help="Number of nodes in the whole system to consider.",default=1000)
-    parser.add_argument("mem", help="Type of memory system (affects channel count and total BW)",choices=["DDR4","HBM"])
+    parser.add_argument("--singleBuffer", dest='singleBuffer',default=False, action='store_true',help="If true, use single receive buffer (opportunity study)")
     args = parser.parse_args()
 
     def check_arg(arg, msg):
@@ -33,6 +34,7 @@ def main():
                             'BanksPerChannel' : 32,
                             'BWRange': linspace(10,1000,20),
                             'Servers': args.nodes,
+                            'SingleBuffer':args.singleBuffer,
                             'N_rpcs' : args.n
                             }
         else:
@@ -42,8 +44,9 @@ def main():
                             'NumberOfChannels' : args.channels,
                             'NumberOfCores' : args.cores,
                             'BanksPerChannel' : 8,
-                            'BWRange': linspace(600,1000,20),
+                            'BWRange': linspace(40,1000,20),
                             'Servers': args.nodes,
+                            'SingleBuffer':args.singleBuffer,
                             'N_rpcs' : args.n
                             }
 
@@ -76,7 +79,11 @@ def main():
 
     output_fields.append('n_dropped')
 
-    with open('queueing'+args.mode+'_'+args.mem+'_'+str(args.nodes)+'Nodes.csv','w') as fh:
+    if args.singleBuffer is True:
+        bstring = '_singleBufferBDP'
+    else:
+        bstring = ''
+    with open('queueing'+args.mode+'_'+args.mem+'_'+str(args.nodes)+'Nodes'+bstring+'.csv','w') as fh:
         writer = csv.DictWriter(fh, fieldnames = output_fields)
         writer.writeheader()
         for k,v in sorted(odict.items()):

@@ -181,6 +181,15 @@ class ClosedLoopRPCGenerator(object):
         # Terminate sim, kill the NI
         self.endSim()
 
+
+def str2bool(v):
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
 def simulateAppAndNI_DRAM(argsFromInvoker):
     parser = argparse.ArgumentParser(description='Run a M*k/D/k/N queueing sim.')
     parser.add_argument('-k','--NumberOfChannels', dest='NumberOfChannels', type=int, default=1,help='Number of DRAM chs. to assume in the simulation (k in Kendall\'s notation)')
@@ -192,9 +201,10 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     parser.add_argument('-n', '--N_rpcs', dest='NumRPCs', type=int, default=1,help='Number of RPCS/messages/jobs to simulate.')
     parser.add_argument('-s', '--serv_time', dest='serv_time', type=int, default=100,help='Service time of the RPC')
     parser.add_argument('-S', '--Servers', dest='servers', type=int, default=10000,help='Number of server nodes to assume.')
+    parser.add_argument('-R', '--SingleBuffer', dest='singleBuffer', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to assume a single buffer.')
+
     args = parser.parse_args(argsFromInvoker.split(' '))
     env = Environment()
-
 
     # 100ns to 100us, with a precision of 0.1%
     latencyStore = HdrHistogram(MIN_STIME_NS, MAX_STIME_NS, 3)
@@ -204,14 +214,16 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     N_connections = args.servers * args.servers
     # Buffer space compared to LLC size
     BDP = float(args.BWGbps)/8.0 * 1000 # Gbps/8 * ns = bytes
-    BufSpace = N_connections * BDP
+    if args.singleBuffer is True:
+        BufSpace = BDP
+    else:
+        BufSpace = N_connections * BDP
     LLCSpace = 1.5e6*args.NumberOfCores # 1.5MB/core, Xeon Scalable
 
     # Prob NI does DDIO into cache
     p_ddio = (float(LLCSpace) / BufSpace)*100
     #print('p_hit',p_ddio)
-
-    print('[NEW JOB: BW',args.BWGbps,', lambda',args.LambdaArrivalRate,'BDP',BDP,'Buffer space(MB)',BufSpace/1e6,', LLC Size(MB)',LLCSpace/1e6,'Prob DDIO hit',p_ddio,']')
+    #print('[NEW JOB: BW',args.BWGbps,', lambda',args.LambdaArrivalRate,'BDP',BDP,'Buffer space(MB)',BufSpace/1e6,', LLC Size(MB)',LLCSpace/1e6,'Prob DDIO hit',p_ddio,']')
 
     # Create N queues, one per DRAM channel
     if args.NumQueueSlots == -1:
