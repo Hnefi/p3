@@ -23,7 +23,11 @@ tCAS = 14
 tRP = 14
 tRAS = 24
 tOffchip = 25
-RB_HIT_RATE = 100
+RB_HIT_RATE = 75
+
+# Min serv. time (ns)
+MIN_STIME_NS = 100
+MAX_STIME_NS = 1000 * MIN_STIME_NS
 
 # Print out average and tail latency
 def printServiceTimes(latStore):
@@ -100,7 +104,7 @@ class NI(object):
                 return
 
 class ClosedLoopRPCGenerator(object):
-    def __init__(self,env,sharedQueues,latStore,num,stime,NIToInterrupt,i):
+    def __init__(self,env,sharedQueues,latStore,num,stime,NIToInterrupt,i,max_stime_ns):
         self.env = env
         self.queues = sharedQueues
         self.latencyStore = latStore
@@ -109,14 +113,38 @@ class ClosedLoopRPCGenerator(object):
         self.ni_to_interrupt = NIToInterrupt
         self.rpcid = i
         self.serv_time = stime
+        self.kill_sim_threshold = max_stime_ns
+        self.killed = False
+        self.lastFiveSTimes = [ ]
         if i is 0:
             self.isMaster = True
         else:
             self.isMaster = False
         self.action = env.process(self.run())
 
+    def putSTime(self,time):
+        self.lastFiveSTimes.append(time)
+        if len(self.lastFiveSTimes) >= 5:
+            del self.lastFiveSTimes[0]
+
+    def checkTimeOverThreshold(self,item):
+        if item >= self.kill_sim_threshold:
+            return True
+        return False
+
+    def isSimulationUnstable(self):
+        timeGreaterThanThresholdList = [ self.checkTimeOverThreshold(x) for x in self.lastFiveSTimes ]
+        if all(timeGreaterThanThresholdList) is True:
+            return True
+        return False
+
+    def endSim(self):
+        if self.isMaster is True:
+            self.ni_to_interrupt.action.interrupt()
+        self.killed = True
+
     def run(self):
-        while self.nRPCS > 0:
+        while self.nRPCS > 0 and self.killed is False:
             if (self.nRPCS % PRINT_INTERVAL) == 0:
                 print('RPCs simulated:',self.numSimulated)
 
@@ -142,12 +170,16 @@ class ClosedLoopRPCGenerator(object):
             total_time = self.env.now - before_queue
             #print('Core num',self.rpcid,', RPC num',self.numSimulated,'total processing time',total_time)
             self.latencyStore.record_value(total_time)
+            self.putSTime(total_time)
+            if self.isMaster is True and self.isSimulationUnstable() is True:
+                print('Simulation was unstable, last five service times from core 0 were:',self.lastFiveSTimes,', killing sim.')
+                self.endSim()
+
             self.nRPCS -= 1
             self.numSimulated += 1
 
         # Terminate sim, kill the NI
-        if self.isMaster is True:
-            self.ni_to_interrupt.action.interrupt()
+        self.endSim()
 
 def simulateAppAndNI_DRAM(argsFromInvoker):
     parser = argparse.ArgumentParser(description='Run a M*k/D/k/N queueing sim.')
@@ -165,7 +197,7 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
 
 
     # 100ns to 100us, with a precision of 0.1%
-    latencyStore = HdrHistogram(100, 100000, 3)
+    latencyStore = HdrHistogram(MIN_STIME_NS, MAX_STIME_NS, 3)
 
     # Number of connections per server
     #N_threads = args.servers * args.NumberOfCores
@@ -190,7 +222,7 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     # NI antagonist
     NIDevice = NI(env,args.LambdaArrivalRate,DRAMChannels,p_ddio)
     # create rpc generator
-    CPUsModel = [ClosedLoopRPCGenerator(env,DRAMChannels,latencyStore,(args.NumRPCs/args.NumberOfCores),args.serv_time,NIDevice,i) for i in range(args.NumberOfCores)]
+    CPUsModel = [ClosedLoopRPCGenerator(env,DRAMChannels,latencyStore,(args.NumRPCs/args.NumberOfCores),args.serv_time,NIDevice,i,MAX_STIME_NS) for i in range(args.NumberOfCores)]
 
     env.run()
     return [ getServiceTimes(latencyStore), 0 ]

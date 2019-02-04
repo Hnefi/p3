@@ -42,7 +42,7 @@ def main():
                             'NumberOfChannels' : args.channels,
                             'NumberOfCores' : args.cores,
                             'BanksPerChannel' : 8,
-                            'BWRange': linspace(40,800,20),
+                            'BWRange': linspace(600,1000,20),
                             'Servers': args.nodes,
                             'N_rpcs' : args.n
                             }
@@ -76,7 +76,7 @@ def main():
 
     output_fields.append('n_dropped')
 
-    with open('queueing'+args.mode+'.csv','w') as fh:
+    with open('queueing'+args.mode+'_'+args.mem+'_'+str(args.nodes)+'Nodes.csv','w') as fh:
         writer = csv.DictWriter(fh, fieldnames = output_fields)
         writer.writeheader()
         for k,v in sorted(odict.items()):
