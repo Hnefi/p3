@@ -14,6 +14,8 @@ def main():
     parser.add_argument("--channels", type=int,help="Number of DRAM channels",default = 8)
     parser.add_argument("--cores", type=int,help="Number of cores/RPC servers",default = 8)
     parser.add_argument("--nodes", type=int,help="Number of nodes in the whole system to consider.",default=1000)
+    parser.add_argument("--lowBW", type=int,help="Lower bound of network BW to run.",default=40)
+    parser.add_argument("--highBW", type=int,help="Upper bound of network BW to run.",default=800)
     parser.add_argument("--singleBuffer", dest='singleBuffer',default=False, action='store_true',help="If true, use single receive buffer (opportunity study)")
     args = parser.parse_args()
 
@@ -32,7 +34,7 @@ def main():
                             'NumberOfChannels' : args.channels,
                             'NumberOfCores' : args.cores,
                             'BanksPerChannel' : 32,
-                            'BWRange': linspace(10,1000,20),
+                            'BWRange': linspace(args.lowBW,args.highBW,30),
                             'Servers': args.nodes,
                             'SingleBuffer':args.singleBuffer,
                             'N_rpcs' : args.n
@@ -44,7 +46,7 @@ def main():
                             'NumberOfChannels' : args.channels,
                             'NumberOfCores' : args.cores,
                             'BanksPerChannel' : 8,
-                            'BWRange': linspace(40,1000,20),
+                            'BWRange': linspace(args.lowBW,args.highBW,30),
                             'Servers': args.nodes,
                             'SingleBuffer':args.singleBuffer,
                             'N_rpcs' : args.n

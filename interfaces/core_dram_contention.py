@@ -8,12 +8,14 @@ from scipy.special import binom as BinomCoefficient
 from .LatencyTracker import ExactLatencyTracker
 from hdrh.histogram import HdrHistogram
 from random import randint
+from math import floor
 
 # Relative path required to have ./p3 and ./my_simpy in same dir
 import sys
 sys.path.append("..")
 from my_simpy.src.simpy import Environment,Interrupt
 from my_simpy.src.simpy.resources.resource import FiniteQueueResource, Resource
+from my_simpy.src.simpy.resources.store import Store
 
 # Interval to print how many RPCs this generator has run
 PRINT_INTERVAL = 100000
@@ -41,13 +43,21 @@ def getServiceTimes(latStore):
     vals = [ latStore.get_value_at_percentile(p) for p in percentiles ]
     return zip(percentiles,vals)
 
-class RPCFactory(object):
-    def __init__(self,ClassType,*args):
-        self.ClassToConstruct = ClassType
-        self.args = args
+class RPC(object):
+    def __init__(self,d):
+        self.dispatch_time = d
+        self.start_proc_time = -1
+        self.end_proc_time = -1
+        self.completion_time = -1
 
-    def construct(self):
-        return self.ClassToConstruct(*self.args)
+    def getQueuedTime(self):
+        return self.start_proc_time - self.dispatch_time
+
+    def getProcessingTime(self):
+        return self.end_proc_time - self.start_proc_time
+
+    def getTotalServiceTime(self):
+        return self.completion_time - self.dispatch_time
 
 class InfiniteQueueDRAM(Resource):
     def __init__(self,env,nbanks):
@@ -88,32 +98,46 @@ class NIPacket(object):
                 raise e
 
 class NI(object):
-    def __init__(self,env,ArrivalRate,resource_queues,p_ddio):
+    def __init__(self,env,ArrivalRate,resource_queues,p_ddio,RPCSize,dispatch_queue,N):
         self.env = env
         self.queues = resource_queues
         self.myLambda = ArrivalRate
         self.prob_ddio = p_ddio
+        self.dispatch_queue = dispatch_queue
+        self.RPCSize = RPCSize
+        self.numRPCs = N
         self.action = env.process(self.run())
 
     def run(self):
-        while True:
-            try:
-                yield self.env.timeout(self.myLambda)
+        numSimulated = 0
+        while numSimulated < self.numRPCs:
+            # TODO: does this need to change if we unroll
+            #       multiple DRAM reqs and overshoot the lambda?
+            yield self.env.timeout(self.myLambda)
+
+            # Put RPC into the dispatch queue
+            newRPC = RPC(self.env.now)
+            num_reqs = floor(self.RPCSize / 64)
+            for i in range(num_reqs):
                 r = NIPacket(self.env,self.queues,self.prob_ddio)
-            except Interrupt:
-                return
+                yield self.env.timeout(1)
+
+            yield self.dispatch_queue.put(newRPC)
+            #print('NI put rpc number',numSimulated,'into dispatch queue at time',newRPC.dispatch_time)
+            numSimulated += 1
 
 class ClosedLoopRPCGenerator(object):
-    def __init__(self,env,sharedQueues,latStore,num,stime,NIToInterrupt,i,max_stime_ns):
+    def __init__(self,env,sharedQueues,latStore,stime,NIToInterrupt,i,max_stime_ns,dispatch_queue,p_ddio):
         self.env = env
         self.queues = sharedQueues
         self.latencyStore = latStore
-        self.nRPCS = num
         self.numSimulated = 0
         self.ni_to_interrupt = NIToInterrupt
-        self.rpcid = i
+        self.cid = i
         self.serv_time = stime
         self.kill_sim_threshold = max_stime_ns
+        self.dispatch_queue = dispatch_queue
+        self.p_hit = p_ddio
         self.killed = False
         self.lastFiveSTimes = [ ]
         if i is 0:
@@ -143,44 +167,56 @@ class ClosedLoopRPCGenerator(object):
             self.ni_to_interrupt.action.interrupt()
         self.killed = True
 
-    def run(self):
-        while self.nRPCS > 0 and self.killed is False:
-            if (self.nRPCS % PRINT_INTERVAL) == 0:
-                print('RPCs simulated:',self.numSimulated)
+    # read or write rpc buffer
+    def doRPCBufferInteraction(self):
+        rand_ddiohit = randint(0,100)
+        if rand_ddiohit <= self.p_hit:
+            return # no dram traffic
+        # else queue up
+        q = self.queues[randint(0,len(self.queues)-1)] # Pick a queue
+        with q.request() as req:
+            yield req
+            r = q.getBankLatency()
+            yield self.env.timeout(r)
 
+    def run(self):
+        while self.killed is False:
             # Start new RPC
-            before_queue = self.env.now
-            q = self.queues[randint(0,len(self.queues)-1)] # Pick a queue
+            rpc = yield self.dispatch_queue.get()
+            #print('core',self.cid,'got rpc from the dispatch queue',rpc,'at time',self.env.now,'dispatch time',rpc.dispatch_time)
+            rpc.start_proc_time = self.env.now
+            self.doRPCBufferInteraction()
+
             # Mem. request 1
+            q = self.queues[randint(0,len(self.queues)-1)]
             with q.request() as req:
                 yield req
                 r = q.getBankLatency()
-                #print('Core num',self.rpcid,', RPC num',self.numSimulated,'doing mem req. 1, should wait for',r)
                 yield self.env.timeout(r)
 
             yield self.env.timeout(self.serv_time)
 
-            q = self.queues[randint(0,len(self.queues)-1)] # Pick another queue
             # Mem. request 2
+            q = self.queues[randint(0,len(self.queues)-1)]
             with q.request() as req:
                 yield req
                 r = q.getBankLatency()
                 #print('Core num',self.rpcid,', RPC num',self.numSimulated,'doing mem req. 2, should wait for',r)
                 yield self.env.timeout(r)
-            total_time = self.env.now - before_queue
-            #print('Core num',self.rpcid,', RPC num',self.numSimulated,'total processing time',total_time)
+
+            rpc.end_proc_time = self.env.now
+
+            # Put RPC response to memory
+            self.doRPCBufferInteraction()
+
+            rpc.completion_time = self.env.now
+            total_time = rpc.getTotalServiceTime()
+            #print('Core num',self.cid,', RPC num',self.numSimulated,'total processing time',total_time)
             self.latencyStore.record_value(total_time)
             self.putSTime(total_time)
             if self.isMaster is True and self.isSimulationUnstable() is True:
                 print('Simulation was unstable, last five service times from core 0 were:',self.lastFiveSTimes,', killing sim.')
                 self.endSim()
-
-            self.nRPCS -= 1
-            self.numSimulated += 1
-
-        # Terminate sim, kill the NI
-        self.endSim()
-
 
 def str2bool(v):
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
@@ -206,6 +242,8 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     args = parser.parse_args(argsFromInvoker.split(' '))
     env = Environment()
 
+    RPC_SIZE= 64 # TODO: make dynamic
+
     # 100ns to 100us, with a precision of 0.1%
     latencyStore = HdrHistogram(MIN_STIME_NS, MAX_STIME_NS, 3)
 
@@ -221,8 +259,11 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     LLCSpace = 1.5e6*args.NumberOfCores # 1.5MB/core, Xeon Scalable
 
     # Prob NI does DDIO into cache
-    p_ddio = (float(LLCSpace) / BufSpace)*100
-    #print('p_hit',p_ddio)
+    if BufSpace <= LLCSpace:
+        p_ddio = 100
+    else:
+        p_ddio = (float(LLCSpace) / BufSpace)*100
+
     #print('[NEW JOB: BW',args.BWGbps,', lambda',args.LambdaArrivalRate,'BDP',BDP,'Buffer space(MB)',BufSpace/1e6,', LLC Size(MB)',LLCSpace/1e6,'Prob DDIO hit',p_ddio,']')
 
     # Create N queues, one per DRAM channel
@@ -231,10 +272,12 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     else:
         DRAMChannels = [Server(env,args.BanksPerChannel,args.NumQueueSlots) for i in range(args.NumberOfChannels)]
 
+    # Dispatch qeuue
+    dispatch_queue = Store(env) # FIXME: infinite length -> drop
     # NI antagonist
-    NIDevice = NI(env,args.LambdaArrivalRate,DRAMChannels,p_ddio)
+    NIDevice = NI(env,args.LambdaArrivalRate,DRAMChannels,p_ddio,RPC_SIZE,dispatch_queue,args.NumRPCs)
     # create rpc generator
-    CPUsModel = [ClosedLoopRPCGenerator(env,DRAMChannels,latencyStore,(args.NumRPCs/args.NumberOfCores),args.serv_time,NIDevice,i,MAX_STIME_NS) for i in range(args.NumberOfCores)]
+    CPUsModel = [ClosedLoopRPCGenerator(env,DRAMChannels,latencyStore,args.serv_time,NIDevice,i,MAX_STIME_NS,dispatch_queue,p_ddio) for i in range(args.NumberOfCores)]
 
     env.run()
     return [ getServiceTimes(latencyStore), 0 ]
