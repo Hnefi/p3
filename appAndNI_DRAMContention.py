@@ -20,6 +20,8 @@ def main():
     parser.add_argument("--lowBW", type=int,help="Lower bound of network BW to run.",default=40)
     parser.add_argument("--highBW", type=int,help="Upper bound of network BW to run.",default=800)
     parser.add_argument("--dataPoints", type=int,help="Number of data points",default=30)
+    parser.add_argument("--serv_time", type=int,help="Total RPC Service time to model (ns)",default=300)
+    parser.add_argument("--reqsPerRPC", type=int,help="Number of memory requests per RPC to model",default=2)
     parser.add_argument("--singleBuffer", dest='singleBuffer',default=False, action='store_true',help="If true, use single receive buffer (opportunity study)")
     parser.add_argument("--printDRAMBW", dest='printDRAMBW',default=False, action='store_true',help="Whether or not to print DRAM BW characteristics post-run.")
     args = parser.parse_args()
@@ -41,6 +43,8 @@ def main():
                             'BanksPerChannel' : 32,
                             'BWRange': linspace(args.lowBW,args.highBW,args.dataPoints),
                             'Servers': args.nodes,
+                            'serv_time': args.serv_time,
+                            'reqsPerRPC': args.reqsPerRPC,
                             'SingleBuffer':args.singleBuffer,
                             'printDRAMBW':args.printDRAMBW,
                             'N_rpcs' : args.n
@@ -54,6 +58,8 @@ def main():
                             'BanksPerChannel' : 8,
                             'BWRange': linspace(args.lowBW,args.highBW,args.dataPoints),
                             'Servers': args.nodes,
+                            'serv_time': args.serv_time,
+                            'reqsPerRPC': args.reqsPerRPC,
                             'SingleBuffer':args.singleBuffer,
                             'printDRAMBW':args.printDRAMBW,
                             'N_rpcs' : args.n
