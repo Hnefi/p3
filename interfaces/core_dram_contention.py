@@ -188,20 +188,32 @@ class NI(object):
                 return
 
 class ClosedLoopRPCGenerator(object):
-    def __init__(self,env,sharedQueues,latStore,stime,NIToInterrupt,i,max_stime_ns,dispatch_queue,p_ddio,sz):
+    def __init__(self,env,sharedQueues,latStore,mean_service_time,NIToInterrupt,i,max_stime_ns,dispatch_queue,p_ddio,sz,num_mem_reqs,amat):
         self.env = env
         self.queues = sharedQueues
         self.latencyStore = latStore
         self.numSimulated = 0
         self.ni_to_interrupt = NIToInterrupt
         self.cid = i
-        self.serv_time = stime
         self.kill_sim_threshold = max_stime_ns
         self.dispatch_queue = dispatch_queue
         self.p_hit = p_ddio
         self.RPCSize = sz
         self.killed = False
         self.lastFiveSTimes = [ ]
+
+        # Values used for calculating processing time, given
+        # the number of memory requests
+        self.num_mem_reqs = num_mem_reqs
+        self.mean_serv_time = mean_service_time
+        self.amat_to_assume = amat
+
+        self.mean_cpu_time = self.mean_serv_time - (self.num_mem_reqs * self.amat_to_assume)
+        self.mean_cpu_time_interval = float(self.mean_cpu_time) / self.num_mem_reqs
+        assert self.mean_cpu_time_interval > 0, "Can't attain this total service time, num_mem_reqs * DRAM amat is >= the CPU time."
+        self.serv_time_dist = stats.expon(scale = self.mean_cpu_time_interval)
+        assert self.serv_time_dist.mean() == self.mean_cpu_time_interval, "Setup the distribution wrongly. Mean:"+str(self.serv_time_dist.mean())+", interval: "+str(self.mean_cpu_time_interval)
+
         if i is 0:
             self.isMaster = True
         else:
@@ -256,25 +268,20 @@ class ClosedLoopRPCGenerator(object):
             self.doRPCBufferInteraction(rpc.hit)
             #print('RPC buffer interaction [hit?',rpc.hit,']')
 
-            # Mem. request 1
-            q = self.queues[randint(0,len(self.queues)-1)]
-            with q.request() as req:
-                yield req
-                r = q.getBankLatency()
-                yield self.env.timeout(r)
-            q.completeReq(64)
+            # Enter processing loop
+            for i in range(self.num_mem_reqs):
+                # Do req. to random MC
+                q = self.queues[randint(0,len(self.queues)-1)]
+                with q.request() as req:
+                    yield req
+                    r = q.getBankLatency()
+                    yield self.env.timeout(r)
+                q.completeReq(64)
 
-            yield self.env.timeout(self.serv_time)
+                # spend some Cpu time, calculated in __init__
+                yield self.env.timeout(self.serv_time_dist.rvs())
 
-            # Mem. request 2
-            q = self.queues[randint(0,len(self.queues)-1)]
-            with q.request() as req:
-                yield req
-                r = q.getBankLatency()
-                #print('Core num',self.rpcid,', RPC num',self.numSimulated,'doing mem req. 2, should wait for',r)
-                yield self.env.timeout(r)
-            q.completeReq(64)
-
+            # RPC is done
             rpc.end_proc_time = self.env.now
 
             # Put RPC response to memory
@@ -283,12 +290,13 @@ class ClosedLoopRPCGenerator(object):
 
             rpc.completion_time = self.env.now
             total_time = rpc.getTotalServiceTime()
-            #print('Core num',self.cid,', RPC num',self.numSimulated,'total processing time',total_time)
+            #print('Core num',self.cid,', RPC num',self.numSimulated,'total processing time',rpc.getProcessingTime(),', total e-e service time',total_time)
             self.latencyStore.record_value(total_time)
             self.putSTime(total_time)
             if self.isMaster is True and self.isSimulationUnstable() is True:
                 print('Simulation was unstable, last five service times from core 0 were:',self.lastFiveSTimes,', killing sim.')
                 self.endSim()
+            self.numSimulated += 1
 
 def str2bool(v):
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
@@ -309,13 +317,14 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     parser.add_argument('-n', '--N_rpcs', dest='NumRPCs', type=int, default=1,help='Number of RPCS/messages/jobs to simulate.')
     parser.add_argument('-s', '--serv_time', dest='serv_time', type=int, default=100,help='Service time of the RPC')
     parser.add_argument('-S', '--Servers', dest='servers', type=int, default=10000,help='Number of server nodes to assume.')
+    parser.add_argument('--reqsPerRPC', dest='numMemRequests', type=int, default=2,help='Number of memory requests to do per RPC.')
     parser.add_argument('-R', '--SingleBuffer', dest='singleBuffer', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to assume a single buffer.')
     parser.add_argument('--printDRAMBW', dest='printDRAMBW', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to print DRAM BW characteristics post-run.')
 
     args = parser.parse_args(argsFromInvoker.split(' '))
     env = Environment()
 
-    RPC_SIZE= 64 # TODO: make dynamic
+    RPC_SIZE = 64 # TODO: make dynamic
 
     dram_avg_lat = tOffchip + (RB_HIT_RATE/100)*tCAS + (1-(RB_HIT_RATE/100))*(tRP+tRAS+tCAS)
     #print('Avg DRAM lat:',dram_avg_lat)
@@ -356,7 +365,7 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     NIDevice = NI(env,args.LambdaArrivalRate,DRAMChannels,p_ddio,RPC_SIZE,dispatch_queue,args.NumRPCs)
 
     # create rpc generator
-    CPUsModel = [ClosedLoopRPCGenerator(env,DRAMChannels,latencyStore,args.serv_time,NIDevice,i,MAX_STIME_NS,dispatch_queue,p_ddio,RPC_SIZE) for i in range(args.NumberOfCores)]
+    CPUsModel = [ClosedLoopRPCGenerator(env,DRAMChannels,latencyStore,args.serv_time,NIDevice,i,MAX_STIME_NS,dispatch_queue,p_ddio,RPC_SIZE,args.numMemRequests,dram_avg_lat) for i in range(args.NumberOfCores)]
 
     env.run()
 
