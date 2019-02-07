@@ -209,7 +209,7 @@ class ClosedLoopRPCGenerator(object):
         self.amat_to_assume = amat
 
         self.mean_cpu_time = self.mean_serv_time - (self.num_mem_reqs * self.amat_to_assume)
-        self.mean_cpu_time_interval = float(self.mean_cpu_time) / self.num_mem_reqs
+        self.mean_cpu_time_interval = float(self.mean_cpu_time) / (self.num_mem_reqs-1)
         assert self.mean_cpu_time_interval > 0, "Can't attain this total service time, num_mem_reqs * DRAM amat is >= the CPU time."
         self.serv_time_dist = stats.expon(scale = self.mean_cpu_time_interval)
         assert self.serv_time_dist.mean() == self.mean_cpu_time_interval, "Setup the distribution wrongly. Mean:"+str(self.serv_time_dist.mean())+", interval: "+str(self.mean_cpu_time_interval)
@@ -279,7 +279,8 @@ class ClosedLoopRPCGenerator(object):
                 q.completeReq(64)
 
                 # spend some Cpu time, calculated in __init__
-                yield self.env.timeout(self.serv_time_dist.rvs())
+                if i < (self.num_mem_reqs-1): # don't do processing the last time
+                    yield self.env.timeout(self.serv_time_dist.rvs())
 
             # RPC is done
             rpc.end_proc_time = self.env.now
