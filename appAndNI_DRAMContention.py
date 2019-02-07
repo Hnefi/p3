@@ -1,6 +1,9 @@
 import argparse
 import csv
 
+from os.path import isfile
+from shutil import copyfile
+
 # Module interfaces
 from parallel import Invoker
 from interfaces.simpy_interface import SimpyInterface
@@ -16,7 +19,9 @@ def main():
     parser.add_argument("--nodes", type=int,help="Number of nodes in the whole system to consider.",default=1000)
     parser.add_argument("--lowBW", type=int,help="Lower bound of network BW to run.",default=40)
     parser.add_argument("--highBW", type=int,help="Upper bound of network BW to run.",default=800)
+    parser.add_argument("--dataPoints", type=int,help="Number of data points",default=30)
     parser.add_argument("--singleBuffer", dest='singleBuffer',default=False, action='store_true',help="If true, use single receive buffer (opportunity study)")
+    parser.add_argument("--printDRAMBW", dest='printDRAMBW',default=False, action='store_true',help="Whether or not to print DRAM BW characteristics post-run.")
     args = parser.parse_args()
 
     def check_arg(arg, msg):
@@ -34,9 +39,10 @@ def main():
                             'NumberOfChannels' : args.channels,
                             'NumberOfCores' : args.cores,
                             'BanksPerChannel' : 32,
-                            'BWRange': linspace(args.lowBW,args.highBW,30),
+                            'BWRange': linspace(args.lowBW,args.highBW,args.dataPoints),
                             'Servers': args.nodes,
                             'SingleBuffer':args.singleBuffer,
+                            'printDRAMBW':args.printDRAMBW,
                             'N_rpcs' : args.n
                             }
         else:
@@ -46,9 +52,10 @@ def main():
                             'NumberOfChannels' : args.channels,
                             'NumberOfCores' : args.cores,
                             'BanksPerChannel' : 8,
-                            'BWRange': linspace(args.lowBW,args.highBW,30),
+                            'BWRange': linspace(args.lowBW,args.highBW,args.dataPoints),
                             'Servers': args.nodes,
                             'SingleBuffer':args.singleBuffer,
+                            'printDRAMBW':args.printDRAMBW,
                             'N_rpcs' : args.n
                             }
 
@@ -85,7 +92,13 @@ def main():
         bstring = '_singleBufferBDP'
     else:
         bstring = ''
-    with open('queueing'+args.mode+'_'+args.mem+'_'+str(args.nodes)+'Nodes'+bstring+'.csv','w') as fh:
+
+    # backup old file
+    fstring = 'queueing'+args.mode+'_'+args.mem+'_'+str(args.nodes)+'Nodes'+bstring+'.csv'
+    if isfile(fstring):
+        copyfile(fstring,fstring+'.bak')
+
+    with open(fstring,'w') as fh:
         writer = csv.DictWriter(fh, fieldnames = output_fields)
         writer.writeheader()
         for k,v in sorted(odict.items()):
