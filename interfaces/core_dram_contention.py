@@ -123,6 +123,24 @@ class Server(FiniteQueueResource):
         super().__init__(env,numIndepServers,qdepth)
         self.myCores = numIndepServers
 
+# Also a separate process
+class PrefetchRequest(object):
+    def __init__(self,env,resource_queues,sz):
+        self.env = env
+        self.queues = resource_queues
+        self.size = sz
+        self.action = env.process(self.run())
+
+    def run(self):
+        num_reqs = floor(self.size / 64)
+        for i in range(num_reqs):
+            # Queue up for DRAM
+            q = self.queues[randint(0,len(self.queues)-1)]
+            with q.request() as req:
+                yield req
+                yield self.env.timeout(q.getBankLatency())
+            q.completeReq(64)
+
 # This needs to be a seperate process to run independently to arrivals
 class RPCDispatch(object):
     def __init__(self,env,resource_queues,dq,ddio,sz,i):
@@ -187,8 +205,9 @@ class NI(object):
                 print("NI killed with Simpy exception:",i,"....EoSim")
                 return
 
+
 class ClosedLoopRPCGenerator(object):
-    def __init__(self,env,sharedQueues,latStore,mean_service_time,NIToInterrupt,i,max_stime_ns,dispatch_queue,p_ddio,sz,num_mem_reqs,amat):
+    def __init__(self,env,sharedQueues,latStore,mean_service_time,NIToInterrupt,i,max_stime_ns,dispatch_queue,p_ddio,sz,num_mem_reqs,amat,micaPrefetch):
         self.env = env
         self.queues = sharedQueues
         self.latencyStore = latStore
@@ -200,6 +219,7 @@ class ClosedLoopRPCGenerator(object):
         self.p_hit = p_ddio
         self.RPCSize = sz
         self.killed = False
+        self.prefetch = micaPrefetch
         self.lastFiveSTimes = [ ]
 
         # Values used for calculating processing time, given
@@ -266,6 +286,11 @@ class ClosedLoopRPCGenerator(object):
             #print('core',self.cid,'got rpc from the dispatch queue',rpc,'at time',self.env.now,'dispatch time',rpc.dispatch_time)
             rpc.start_proc_time = self.env.now
             self.doRPCBufferInteraction(rpc.hit)
+
+            #do prefetch for next rpc packet
+            if self.prefetch is True:
+                pf = PrefetchRequest(self.env, self.queues, 64)
+
             #print('RPC buffer interaction [hit?',rpc.hit,']')
 
             # Enter processing loop
@@ -278,9 +303,13 @@ class ClosedLoopRPCGenerator(object):
                     yield self.env.timeout(r)
                 q.completeReq(64)
 
+                #do prefetch for next metadata
+                if self.prefetch is True:
+                    pf = PrefetchRequest(self.env, self.queues, 64)
+
                 # spend some Cpu time, calculated in __init__
                 if i < (self.num_mem_reqs-1): # don't do processing the last time
-                    yield self.env.timeout(self.serv_time_dist.rvs())
+                    yield self.env.timeout(self.mean_cpu_time_interval)
 
             # RPC is done
             rpc.end_proc_time = self.env.now
@@ -321,6 +350,7 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     parser.add_argument('--reqsPerRPC', dest='numMemRequests', type=int, default=2,help='Number of memory requests to do per RPC.')
     parser.add_argument('-R', '--SingleBuffer', dest='singleBuffer', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to assume a single buffer.')
     parser.add_argument('--printDRAMBW', dest='printDRAMBW', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to print DRAM BW characteristics post-run.')
+    parser.add_argument('--micaPrefetch', dest='micaPrefetch', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to model MICA prefetching (roughly doubles BW utilization).')
 
     args = parser.parse_args(argsFromInvoker.split(' '))
     env = Environment()
@@ -351,7 +381,7 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     else:
         p_ddio = (float(LLCSpace) / BufSpace)*100
 
-    #print('[NEW JOB: BW',args.BWGbps,', lambda',args.LambdaArrivalRate,'BDP',BDP,'Buffer space(MB)',BufSpace/1e6,', LLC Size(MB)',LLCSpace/1e6,'Prob DDIO hit',p_ddio,']')
+    print('[NEW JOB: BW',args.BWGbps,', lambda',args.LambdaArrivalRate,'BDP',BDP,'Buffer space(MB)',BufSpace/1e6,', LLC Size(MB)',LLCSpace/1e6,'Prob DDIO hit',p_ddio,']')
 
     # Create N queues, one per DRAM channel
     if args.NumQueueSlots == -1:
@@ -366,14 +396,23 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     NIDevice = NI(env,args.LambdaArrivalRate,DRAMChannels,p_ddio,RPC_SIZE,dispatch_queue,args.NumRPCs)
 
     # create rpc generator
-    CPUsModel = [ClosedLoopRPCGenerator(env,DRAMChannels,latencyStore,args.serv_time,NIDevice,i,MAX_STIME_NS,dispatch_queue,p_ddio,RPC_SIZE,args.numMemRequests,dram_avg_lat) for i in range(args.NumberOfCores)]
+    CPUsModel = [ClosedLoopRPCGenerator(env,DRAMChannels,latencyStore,args.serv_time,NIDevice,i,MAX_STIME_NS,dispatch_queue,p_ddio,RPC_SIZE,args.numMemRequests,dram_avg_lat,args.micaPrefetch) for i in range(args.NumberOfCores)]
 
     env.run()
 
     # print dram BW
-    if args.printDRAMBW is True:
-        dramChannelBW_Lists = [ ch.getIntervalBandwidths() for ch in DRAMChannels ] # list of lists
-        for ch in dramChannelBW_Lists:
-            print(ch)
+    #if args.printDRAMBW is True:
+        #dramChannelBW_Lists = [ ch.getIntervalBandwidths() for ch in DRAMChannels ] # list of lists
+        #for ch in dramChannelBW_Lists:
+            #print(ch)
 
-    return [ getServiceTimes(latencyStore), 0 ]
+    dramChannelBW_Lists = [ ch.getIntervalBandwidths() for ch in DRAMChannels ] # list of lists
+    def avgBW(l):
+        return sum(l,0.0)/len(l)
+
+    #retList = [ getServiceTimes(latencyStore), 0 ] + [ avgBW(ch) for ch in dramChannelBW_Lists ]
+    perCh_averages = [ avgBW(ch) for ch in dramChannelBW_Lists ]
+    if args.printDRAMBW is True:
+        print('DRAM channel bandwidths for job (',args.BWGbps,'):',perCh_averages)
+    retList = [ getServiceTimes(latencyStore), 0, sum(perCh_averages) ]
+    return retList

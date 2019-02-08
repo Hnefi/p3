@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--reqsPerRPC", type=int,help="Number of memory requests per RPC to model",default=2)
     parser.add_argument("--singleBuffer", dest='singleBuffer',default=False, action='store_true',help="If true, use single receive buffer (opportunity study)")
     parser.add_argument("--printDRAMBW", dest='printDRAMBW',default=False, action='store_true',help="Whether or not to print DRAM BW characteristics post-run.")
+    parser.add_argument("--micaPrefetch", dest='micaPrefetch',default=False, action='store_true',help="Whether the RPCs themselves model aggressive MICA prefetching.")
     args = parser.parse_args()
 
     def check_arg(arg, msg):
@@ -47,6 +48,7 @@ def main():
                             'reqsPerRPC': args.reqsPerRPC,
                             'SingleBuffer':args.singleBuffer,
                             'printDRAMBW':args.printDRAMBW,
+                            'micaPrefetch':args.micaPrefetch,
                             'N_rpcs' : args.n
                             }
         else:
@@ -55,13 +57,14 @@ def main():
                             'runnableTarg': SimpyInterface,
                             'NumberOfChannels' : args.channels,
                             'NumberOfCores' : args.cores,
-                            'BanksPerChannel' : 8,
+                            'BanksPerChannel' : 18,
                             'BWRange': linspace(args.lowBW,args.highBW,args.dataPoints),
                             'Servers': args.nodes,
                             'serv_time': args.serv_time,
                             'reqsPerRPC': args.reqsPerRPC,
                             'SingleBuffer':args.singleBuffer,
                             'printDRAMBW':args.printDRAMBW,
+                            'micaPrefetch':args.micaPrefetch,
                             'N_rpcs' : args.n
                             }
 
@@ -83,6 +86,7 @@ def main():
     # Remap to dictwriter-able format.
     for x in flat_results:
         for k,v in x.items():
+            avg_bw = v.pop()
             n_dropped = v.pop()
             l = sorted(list(v[0]),key = lambda t : t[0])
             #print(k,l,n_dropped)
@@ -91,8 +95,10 @@ def main():
                     output_fields.append(tup[0])
                 init_or_add(odict,k,tup[1])
         init_or_add(odict,k,n_dropped)
+        init_or_add(odict,k,avg_bw)
 
     output_fields.append('n_dropped')
+    output_fields.append('Avg. DRAM BW')
 
     if args.singleBuffer is True:
         bstring = '_singleBufferBDP'
