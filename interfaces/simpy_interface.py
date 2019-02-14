@@ -34,7 +34,7 @@ class SimpyInterface(Process):
                 return
 
         # should always get here
-        print("Thread", self.name, "starting work.")
+        #print("Thread", self.name, "starting work.")
         while len(jobs) > 0:
             strToPass = self.simpy_argstring
             job_id = jobs.pop()
@@ -53,4 +53,4 @@ class SimpyInterface(Process):
             # Run it.
             output = simulateAppAndNI_DRAM(strToPass)
             self.workQ.put( {job_id : output}, False ) # nowait
-        print("Thread", self.name, "done all jobs.")
+        #print("Thread", self.name, "done all jobs.")
