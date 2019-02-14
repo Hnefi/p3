@@ -22,6 +22,7 @@ def main():
     parser.add_argument("--dataPoints", type=int,help="Number of data points",default=30)
     parser.add_argument("--serv_time", type=int,help="Total RPC Service time to model (ns)",default=300)
     parser.add_argument("--reqsPerRPC", type=int,help="Number of memory requests per RPC to model",default=2)
+    parser.add_argument('--rpcSizeBytes', type=int, default=64,help='Number of bytes making up each RPC\'s argument/return buffer.')
     parser.add_argument("--singleBuffer", dest='singleBuffer',default=False, action='store_true',help="If true, use single receive buffer (opportunity study)")
     parser.add_argument("--printDRAMBW", dest='printDRAMBW',default=False, action='store_true',help="Whether or not to print DRAM BW characteristics post-run.")
     parser.add_argument("--micaPrefetch", dest='micaPrefetch',default=False, action='store_true',help="Whether the RPCs themselves model aggressive MICA prefetching.")
@@ -49,6 +50,7 @@ def main():
                             'SingleBuffer':args.singleBuffer,
                             'printDRAMBW':args.printDRAMBW,
                             'micaPrefetch':args.micaPrefetch,
+                            'rpcSizeBytes':args.rpcSizeBytes,
                             'N_rpcs' : args.n
                             }
         else:
@@ -65,6 +67,7 @@ def main():
                             'SingleBuffer':args.singleBuffer,
                             'printDRAMBW':args.printDRAMBW,
                             'micaPrefetch':args.micaPrefetch,
+                            'rpcSizeBytes':args.rpcSizeBytes,
                             'N_rpcs' : args.n
                             }
 

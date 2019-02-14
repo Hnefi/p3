@@ -44,7 +44,8 @@ def getServiceTimes(latStore):
     return zip(percentiles,vals)
 
 class RPC(object):
-    def __init__(self,d,llc_hit):
+    def __init__(self,n,d,llc_hit):
+        self.num = n
         self.dispatch_time = d
         self.start_proc_time = -1
         self.end_proc_time = -1
@@ -59,6 +60,9 @@ class RPC(object):
 
     def getTotalServiceTime(self):
         return self.completion_time - self.dispatch_time
+
+class EndOfMeasurements(object):
+    pass
 
 class BWBucket(object):
     def __init__(self,start,end):
@@ -123,63 +127,105 @@ class Server(FiniteQueueResource):
         super().__init__(env,numIndepServers,qdepth)
         self.myCores = numIndepServers
 
-# Also a separate process
-class PrefetchRequest(object):
-    def __init__(self,env,resource_queues,sz):
+class SingleMemoryRequest(object):
+    def __init__(self,env,resource_queues,eventToSucceed):
+        self.env = env
+        self.queues = resource_queues
+        self.event = eventToSucceed
+        self.action = env.process(self.run())
+
+    # runs and then fulfills the event when it's done
+    def run(self):
+        #print('Single request starting at',self.env.now)
+        q = self.queues[randint(0,len(self.queues)-1)]
+        with q.request() as req:
+            yield req
+            yield self.env.timeout(q.getBankLatency())
+        q.completeReq(64)
+        # raise the event
+        #print('Single request raising event at',self.env.now)
+        self.event.succeed()
+
+# Also a separate process to run independently to the above requester
+class RPCDispatchRequest(object):
+    def __init__(self,env,resource_queues,sz,eventCompletion,interRequestTime,dispatch_q,rnum,no_dispatch=False):
         self.env = env
         self.queues = resource_queues
         self.size = sz
+        self.interRequestTime = interRequestTime
+        self.eventCompletion = eventCompletion
+        self.dispatch_queue = dispatch_q
+        self.num = rnum
+        self.no_dispatch = no_dispatch
+        self.action = self.env.process(self.run())
+
+    def run(self):
+        num_reqs = floor(self.size / 64)
+        eventArray = [ self.env.event() for i in range(num_reqs) ]
+        for i in range(num_reqs):
+            #print('RPC',self.num,'created new single req. at',self.env.now)
+            SingleMemoryRequest(self.env,self.queues,eventArray[i])
+            if i < (num_reqs-1):
+                yield self.env.timeout(self.interRequestTime)
+
+        # call to upper layer
+        #print('RPC',self.num,'completed packet writes at',self.env.now)
+        self.eventCompletion.succeed()
+
+        if self.no_dispatch is False:
+            # sleep until all events are fulfilled
+            for i in range(num_reqs):
+                yield eventArray[i]
+                #print('RPC',self.num,'activating event at',self.env.now)
+            newRPC = RPC(self.num,self.env.now,False) # ddio miss on writing payloads to dram
+            yield self.dispatch_queue.put(newRPC)
+
+class SyncOverlappedMemoryRequest(object):
+    def __init__(self,env,resource_queues,sz,completionSignal,interRequestTime=1):
+        self.env = env
+        self.queues = resource_queues
+        self.size = sz
+        self.interRequestTime = interRequestTime
+        self.completionSignal = completionSignal
         self.action = env.process(self.run())
 
     def run(self):
         num_reqs = floor(self.size / 64)
+        eventArray = [ self.env.event() for i in range(num_reqs) ]
         for i in range(num_reqs):
-            # Queue up for DRAM
-            q = self.queues[randint(0,len(self.queues)-1)]
-            with q.request() as req:
-                yield req
-                yield self.env.timeout(q.getBankLatency())
-            q.completeReq(64)
+            SingleMemoryRequest(self.env,self.queues,eventArray[i])
+            if i < (num_reqs-1):
+                yield self.env.timeout(self.interRequestTime)
 
-# This needs to be a seperate process to run independently to arrivals
-class RPCDispatch(object):
-    def __init__(self,env,resource_queues,dq,ddio,sz,i):
+        # sleep until all events are fulfilled
+        for i in range(num_reqs):
+            yield eventArray[i]
+
+        self.completionSignal.succeed()
+
+# Also a separate process to run independently to the above requester
+class AsyncMemoryRequest(object):
+    def __init__(self,env,resource_queues,sz,interRequestTime=1):
         self.env = env
         self.queues = resource_queues
-        self.dispatch_queue = dq
-        self.p_ddio = ddio
-        self.RPCSize = sz
-        self.num = i
+        self.size = sz
+        self.interRequestTime = interRequestTime
         self.action = env.process(self.run())
 
-    def rollHit(self):
-        rand_ddiohit = randint(0,100)
-        if rand_ddiohit <= self.p_ddio:
-            return True
-        return False
-
     def run(self):
-        ddio_hit = self.rollHit()
-        newRPC = RPC(self.env.now,ddio_hit)
-        num_reqs = floor(self.RPCSize / 64)
-        if ddio_hit is True:
-            for i in range(num_reqs):
-                yield self.env.timeout(1)
-            #print('HIT: NI dispatched rpc num',i,'at time',self.env.now)
-            yield self.dispatch_queue.put(newRPC)
-        else:
-            for i in range(num_reqs):
-                # Queue up for DRAM
-                q = self.queues[randint(0,len(self.queues)-1)]
-                with q.request() as req:
-                    try:
-                        yield req
-                        yield self.env.timeout(q.getBankLatency())
-                    except Interrupt as e:
-                        raise e
-                q.completeReq(64)
-            yield self.dispatch_queue.put(newRPC)
-            #print('MISS: NI dispatched rpc num',i,'at time',self.env.now)
+        num_reqs = floor(self.size / 64)
+        eventArray = [ self.env.event() for i in range(num_reqs) ]
+        for i in range(num_reqs):
+            #print('created new single req. at',self.env.now)
+            SingleMemoryRequest(self.env,self.queues,eventArray[i])
+            if i < (num_reqs-1):
+                yield self.env.timeout(self.interRequestTime)
+
+        # sleep until all events are fulfilled
+        for i in range(num_reqs):
+            #print('asyncmemreqest yielding/passivating at',self.env.now)
+            yield eventArray[i]
+            #print('asyncmemreqest activating at',self.env.now)
 
 class NI(object):
     def __init__(self,env,ArrivalRate,resource_queues,p_ddio,RPCSize,dispatch_queue,N):
@@ -192,19 +238,59 @@ class NI(object):
         self.numRPCs = N
         self.action = env.process(self.run())
 
+    def rollHit(self):
+        rand_ddiohit = randint(0,100)
+        if rand_ddiohit <= self.prob_ddio:
+            return True
+        return False
+
     def run(self):
         numSimulated = 0
         while numSimulated < self.numRPCs:
             try:
-                # TODO: does this need to change if we unroll
-                #       multiple DRAM reqs and overshoot the lambda?
+                ddio_hit = self.rollHit()
+                if ddio_hit is True:
+                    num_reqs = floor(self.RPCSize / 64)
+                    for i in range(num_reqs):
+                        if i < (num_reqs-1):
+                            yield self.env.timeout(self.myLambda)
+                    newRPC = RPC(numSimulated,self.env.now,ddio_hit)
+                    #print('HIT: NI dispatched rpc num',numSimulated,'at time',self.env.now)
+                    yield self.dispatch_queue.put(newRPC)
+                else:
+                    # Launch a multi-packet request to memory, dispatch when it is done.
+                    payloadsDoneEvent = self.env.event()
+                    payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,self.dispatch_queue,numSimulated)
+                    yield payloadsDoneEvent # all payloads written
+
                 yield self.env.timeout(self.myLambda)
-                r = RPCDispatch(self.env,self.queues,self.dispatch_queue,self.prob_ddio,self.RPCSize,numSimulated)
                 numSimulated += 1
             except Interrupt as i:
                 print("NI killed with Simpy exception:",i,"....EoSim")
                 return
 
+        yield self.dispatch_queue.put(EndOfMeasurements())
+
+        # After the dispatch is done, keep generating the traffic for realistic measurements.
+        while True:
+            try:
+                ddio_hit = self.rollHit()
+                if ddio_hit is True:
+                    newRPC = RPC(-1,self.env.now,ddio_hit)
+                    num_reqs = floor(self.RPCSize / 64)
+                    for i in range(num_reqs):
+                        if i < (num_reqs-1):
+                            yield self.env.timeout(self.myLambda)
+                else:
+                    # Launch a multi-packet request to memory, dispatch when it is done.
+                    payloadsDoneEvent = self.env.event()
+                    payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,self.dispatch_queue,numSimulated,no_dispatch=True)
+                    yield payloadsDoneEvent # all payloads written
+
+                yield self.env.timeout(self.myLambda)
+            except Interrupt as i:
+                #print("NI killed in post-dispatch phase, exception:",i,"....End of Sim...")
+                return
 
 class ClosedLoopRPCGenerator(object):
     def __init__(self,env,sharedQueues,latStore,mean_service_time,NIToInterrupt,i,max_stime_ns,dispatch_queue,p_ddio,sz,num_mem_reqs,amat,micaPrefetch):
@@ -256,42 +342,51 @@ class ClosedLoopRPCGenerator(object):
             return True
         return False
 
-    def endSim(self):
+    def endSimGraceful(self):
+        try:
+            self.ni_to_interrupt.action.interrupt("end of sim")
+            if len(self.dispatch_queue.items) != 0:
+                print("WARNING: Core got EoM packet from NI, but there are still",len(self.dispatch_queue.items),"RPCs in the queue. Recommend check results.")
+        except RuntimeError as e:
+            print('Caught exception',e,'lets transparently ignore it')
+        self.killed = True
+
+    def endSimUnstable(self):
         if self.isMaster is True:
             try:
-                self.ni_to_interrupt.action.interrupt()
+                self.ni_to_interrupt.action.interrupt("unstable")
             except RuntimeError as e:
                 print('Caught exception',e,'lets transparently ignore it')
         self.killed = True
-
-    # read or write rpc buffer
-    def doRPCBufferInteraction(self,hit):
-        num_reqs = floor(self.RPCSize / 64)
-        if hit is True:
-            for i in range(num_reqs):
-                yield self.env.timeout(1)
-        else:
-            for i in range(num_reqs):
-                q = self.queues[randint(0,len(self.queues)-1)] # Pick a queue
-                with q.request() as req:
-                    yield req
-                    r = q.getBankLatency()
-                    yield self.env.timeout(r)
-                q.completeReq(64)
 
     def run(self):
         while self.killed is False:
             # Start new RPC
             rpc = yield self.dispatch_queue.get()
-            #print('core',self.cid,'got rpc from the dispatch queue',rpc,'at time',self.env.now,'dispatch time',rpc.dispatch_time)
+            if isinstance(rpc,EndOfMeasurements):
+                #print('End of simulation received by core',self.cid,', interrupting NI')
+                self.endSimGraceful()
+                continue
+
+            rpcNumber = rpc.num
+            #print('core',self.cid,'got rpc #',rpcNumber,'from the dispatch queue at time',self.env.now,'dispatch time',rpc.dispatch_time)
             rpc.start_proc_time = self.env.now
-            self.doRPCBufferInteraction(rpc.hit)
+
+            # model buffer reads
+            num_reqs = floor(self.RPCSize / 64)
+            if rpc.hit is True:
+                for i in range(num_reqs):
+                    yield self.env.timeout(1)
+            else:
+                buffersReadEvent = self.env.event()
+                #print('rpc went to sleep at time',self.env.now)
+                physBufferReader = SyncOverlappedMemoryRequest(self.env,self.queues,self.RPCSize,buffersReadEvent)
+                yield buffersReadEvent # wait for all requests to return
+                #print('Re-woke up rpc at time',self.env.now)
 
             #do prefetch for next rpc packet
             if self.prefetch is True:
-                pf = PrefetchRequest(self.env, self.queues, 64)
-
-            #print('RPC buffer interaction [hit?',rpc.hit,']')
+                pf = AsyncMemoryRequest(self.env, self.queues, self.RPCSize)
 
             # Enter processing loop
             for i in range(self.num_mem_reqs):
@@ -305,7 +400,7 @@ class ClosedLoopRPCGenerator(object):
 
                 #do prefetch for next metadata
                 if self.prefetch is True:
-                    pf = PrefetchRequest(self.env, self.queues, 64)
+                    pf = AsyncMemoryRequest(self.env, self.queues, self.RPCSize)
 
                 # spend some Cpu time, calculated in __init__
                 if i < (self.num_mem_reqs-1): # don't do processing the last time
@@ -315,17 +410,23 @@ class ClosedLoopRPCGenerator(object):
             rpc.end_proc_time = self.env.now
 
             # Put RPC response to memory
-            self.doRPCBufferInteraction(rpc.hit)
-            #print('RPC buffer interaction [hit?',rpc.hit,']')
+            num_reqs = floor(self.RPCSize / 64)
+            if rpc.hit is True:
+                for i in range(num_reqs):
+                    yield self.env.timeout(1)
+            else:
+                buffersReadEvent = self.env.event()
+                physBufferReader = SyncOverlappedMemoryRequest(self.env,self.queues,self.RPCSize,buffersReadEvent)
+                yield buffersReadEvent # wait for all requests to return
 
             rpc.completion_time = self.env.now
             total_time = rpc.getTotalServiceTime()
-            #print('Core num',self.cid,', RPC num',self.numSimulated,'total processing time',rpc.getProcessingTime(),', total e-e service time',total_time)
+            #print('Core num',self.cid,', RPC num',rpcNumber,'total processing time',rpc.getProcessingTime(),', total e-e service time',total_time)
             self.latencyStore.record_value(total_time)
             self.putSTime(total_time)
             if self.isMaster is True and self.isSimulationUnstable() is True:
                 print('Simulation was unstable, last five service times from core 0 were:',self.lastFiveSTimes,', killing sim.')
-                self.endSim()
+                self.endSimUnstable()
             self.numSimulated += 1
 
 def str2bool(v):
@@ -348,6 +449,7 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     parser.add_argument('-s', '--serv_time', dest='serv_time', type=int, default=100,help='Service time of the RPC')
     parser.add_argument('-S', '--Servers', dest='servers', type=int, default=10000,help='Number of server nodes to assume.')
     parser.add_argument('--reqsPerRPC', dest='numMemRequests', type=int, default=2,help='Number of memory requests to do per RPC.')
+    parser.add_argument('--rpcSizeBytes', dest='rpcSizeBytes', type=int, default=64,help='Number of bytes making up each RPC\'s argument/return buffer.')
     parser.add_argument('-R', '--SingleBuffer', dest='singleBuffer', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to assume a single buffer.')
     parser.add_argument('--printDRAMBW', dest='printDRAMBW', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to print DRAM BW characteristics post-run.')
     parser.add_argument('--micaPrefetch', dest='micaPrefetch', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to model MICA prefetching (roughly doubles BW utilization).')
@@ -355,7 +457,7 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     args = parser.parse_args(argsFromInvoker.split(' '))
     env = Environment()
 
-    RPC_SIZE = 64 # TODO: make dynamic
+    RPC_SIZE = args.rpcSizeBytes
 
     dram_avg_lat = tOffchip + (RB_HIT_RATE/100)*tCAS + (1-(RB_HIT_RATE/100))*(tRP+tRAS+tCAS)
     #print('Avg DRAM lat:',dram_avg_lat)
