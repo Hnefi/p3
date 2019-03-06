@@ -468,7 +468,7 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
 
     # Number of connections per server
     #N_threads = args.servers * args.NumberOfCores
-    N_connections = args.servers * args.servers
+    N_connections = args.servers
     # Buffer space compared to LLC size
     BDP = float(args.BWGbps)/8.0 * 1000 # Gbps/8 * ns = bytes
     if args.singleBuffer is True:

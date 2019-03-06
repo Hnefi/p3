@@ -7,4 +7,6 @@ mcpat/
 interfaces/cacheResults/
 interfaces/cacheConfigs/
 *.csv
+*.txt
+*.csv.bak
 *venv/
