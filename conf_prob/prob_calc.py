@@ -28,4 +28,6 @@ class ProbCalculator(object):
         singleSetProb = binomCoeff(T,WForConflict) * (1/(float(S**WForConflict)))
         ubound = S * float(singleSetProb)
         #print("for S,W,T = ",S,W,T,"the single set prob is ",singleSetProb,"and the ubound is",ubound)
-        return (ubound,self.theConfig)
+        r = self.theConfig
+        r['Pconf'] = ubound
+        return r
