@@ -14,15 +14,15 @@ def main():
     parser.add_argument("mem", help="Type of memory system (affects channel count and total BW)",choices=["DDR4","HBM"])
     parser.add_argument("--threads", type=int,help="Number of parallel threads to use",default = 1)
     parser.add_argument("--n", type=int,help="Number of rpcs to simulate",default = 10)
-    parser.add_argument("--channels", type=int,help="Number of DRAM channels",default = 8)
-    parser.add_argument("--cores", type=int,help="Number of cores/RPC servers",default = 8)
+    parser.add_argument("--channels", type=int,help="Number of DRAM channels",default = 4)
+    parser.add_argument("--cores", type=int,help="Number of cores/RPC servers",default = 60)
     parser.add_argument("--nodes", type=int,help="Number of nodes in the whole system to consider.",default=1000)
     parser.add_argument("--lowBW", type=int,help="Lower bound of network BW to run.",default=40)
-    parser.add_argument("--highBW", type=int,help="Upper bound of network BW to run.",default=800)
+    parser.add_argument("--highBW", type=int,help="Upper bound of network BW to run.",default=1000)
     parser.add_argument("--dataPoints", type=int,help="Number of data points",default=30)
     parser.add_argument("--serv_time", type=int,help="Total RPC Service time to model (ns)",default=300)
     parser.add_argument("--reqsPerRPC", type=int,help="Number of memory requests per RPC to model",default=2)
-    parser.add_argument('--rpcSizeBytes', type=int, default=64,help='Number of bytes making up each RPC\'s argument/return buffer.')
+    parser.add_argument('--rpcSizeBytes', type=int, default=256,help='Number of bytes making up each RPC\'s argument/return buffer.')
     parser.add_argument("--singleBuffer", dest='singleBuffer',default=False, action='store_true',help="If true, use single receive buffer (opportunity study)")
     parser.add_argument("--printDRAMBW", dest='printDRAMBW',default=False, action='store_true',help="Whether or not to print DRAM BW characteristics post-run.")
     parser.add_argument("--micaPrefetch", dest='micaPrefetch',default=False, action='store_true',help="Whether the RPCs themselves model aggressive MICA prefetching.")
@@ -59,7 +59,7 @@ def main():
                             'runnableTarg': SimpyInterface,
                             'NumberOfChannels' : args.channels,
                             'NumberOfCores' : args.cores,
-                            'BanksPerChannel' : 18,
+                            'BanksPerChannel' : 24,
                             'BWRange': linspace(args.lowBW,args.highBW,args.dataPoints),
                             'Servers': args.nodes,
                             'serv_time': args.serv_time,

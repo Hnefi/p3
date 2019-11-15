@@ -10,3 +10,5 @@ interfaces/cacheConfigs/
 *.txt
 *.csv.bak
 *venv/
+running_venv/
+tags

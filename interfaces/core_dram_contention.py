@@ -8,7 +8,7 @@ from scipy.special import binom as BinomCoefficient
 from .LatencyTracker import ExactLatencyTracker
 from hdrh.histogram import HdrHistogram
 from random import randint
-from math import floor
+from math import floor,ceil
 
 # Relative path required to have ./p3 and ./my_simpy in same dir
 import sys
@@ -276,7 +276,6 @@ class NI(object):
             try:
                 ddio_hit = self.rollHit()
                 if ddio_hit is True:
-                    newRPC = RPC(-1,self.env.now,ddio_hit)
                     num_reqs = floor(self.RPCSize / 64)
                     for i in range(num_reqs):
                         if i < (num_reqs-1):
@@ -315,10 +314,10 @@ class ClosedLoopRPCGenerator(object):
         self.amat_to_assume = amat
 
         self.mean_cpu_time = self.mean_serv_time - (self.num_mem_reqs * self.amat_to_assume)
-        self.mean_cpu_time_interval = float(self.mean_cpu_time) / (self.num_mem_reqs-1)
-        assert self.mean_cpu_time_interval > 0, "Can't attain this total service time, num_mem_reqs * DRAM amat is >= the CPU time."
-        self.serv_time_dist = stats.expon(scale = self.mean_cpu_time_interval)
-        assert self.serv_time_dist.mean() == self.mean_cpu_time_interval, "Setup the distribution wrongly. Mean:"+str(self.serv_time_dist.mean())+", interval: "+str(self.mean_cpu_time_interval)
+        #self.mean_cpu_time_interval = float(self.mean_cpu_time) / (self.num_mem_reqs-1)
+        #assert self.mean_cpu_time_interval > 0, "Can't attain this total service time, num_mem_reqs * DRAM amat is >= the CPU time."
+        #self.serv_time_dist = stats.expon(scale = self.mean_cpu_time_interval)
+        #assert self.serv_time_dist.mean() == self.mean_cpu_time_interval, "Setup the distribution wrongly. Mean:"+str(self.serv_time_dist.mean())+", interval: "+str(self.mean_cpu_time_interval)
 
         if i is 0:
             self.isMaster = True
@@ -372,6 +371,8 @@ class ClosedLoopRPCGenerator(object):
             #print('core',self.cid,'got rpc #',rpcNumber,'from the dispatch queue at time',self.env.now,'dispatch time',rpc.dispatch_time)
             rpc.start_proc_time = self.env.now
 
+            """
+            ### DEPRECATED: Reads are LLC fulfilled (they were just written by the NI)
             # model buffer reads
             num_reqs = floor(self.RPCSize / 64)
             if rpc.hit is True:
@@ -387,37 +388,40 @@ class ClosedLoopRPCGenerator(object):
             #do prefetch for next rpc packet
             if self.prefetch is True:
                 pf = AsyncMemoryRequest(self.env, self.queues, self.RPCSize)
+            """
 
-            # Enter processing loop
-            for i in range(self.num_mem_reqs):
-                # Do req. to random MC
-                q = self.queues[randint(0,len(self.queues)-1)]
-                with q.request() as req:
-                    yield req
-                    r = q.getBankLatency()
-                    yield self.env.timeout(r)
-                q.completeReq(64)
+            # Model MICA rpcs. Assumptions:
+            #   - first access is synchronous (must access the index)
+            #   - all other accesses are parallel (overlapped loads for GETS or stores for PUTS)
+            # Do first access
+            q = self.queues[randint(0,len(self.queues)-1)]
+            with q.request() as req:
+                yield req
+                r = q.getBankLatency()
+                yield self.env.timeout(r)
+            q.completeReq(64)
 
-                #do prefetch for next metadata
-                if self.prefetch is True:
-                    pf = AsyncMemoryRequest(self.env, self.queues, self.RPCSize)
+            # spend some Cpu time, calculated in __init__
+            yield self.env.timeout(self.mean_cpu_time)
 
-                # spend some Cpu time, calculated in __init__
-                if i < (self.num_mem_reqs-1): # don't do processing the last time
-                    yield self.env.timeout(self.mean_cpu_time_interval)
+            # Do payload accesses in parallel
+            # For GET -> asynchronously copy out of DRAM and into local buffers
+            # For SET -> asynchronously copy out of network buffers into DRAM
+            #buffersReadEvent = self.env.event()
+            #physBufferReader = SyncOverlappedMemoryRequest(self.env,self.queues,self.RPCSize,buffersReadEvent)
+            #yield buffersReadEvent # wait for all requests to return
+            AsyncMemoryRequest(self.env, self.queues, self.RPCSize)
 
             # RPC is done
             rpc.end_proc_time = self.env.now
 
-            # Put RPC response to memory
-            num_reqs = floor(self.RPCSize / 64)
-            if rpc.hit is True:
-                for i in range(num_reqs):
-                    yield self.env.timeout(1)
-            else:
-                buffersReadEvent = self.env.event()
-                physBufferReader = SyncOverlappedMemoryRequest(self.env,self.queues,self.RPCSize,buffersReadEvent)
-                yield buffersReadEvent # wait for all requests to return
+            # Model payload write for return value
+            q = self.queues[randint(0,len(self.queues)-1)]
+            with q.request() as req:
+                yield req
+                r = q.getBankLatency()
+                yield self.env.timeout(r)
+            q.completeReq(64)
 
             rpc.completion_time = self.env.now
             total_time = rpc.getTotalServiceTime()
@@ -453,13 +457,16 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     parser.add_argument('-R', '--SingleBuffer', dest='singleBuffer', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to assume a single buffer.')
     parser.add_argument('--printDRAMBW', dest='printDRAMBW', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to print DRAM BW characteristics post-run.')
     parser.add_argument('--micaPrefetch', dest='micaPrefetch', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to model MICA prefetching (roughly doubles BW utilization).')
+    parser.add_argument('--calc_bw', dest='calcBW', type=bool,default=False,help='Just print the BW of a configuration, dont simulate anything.')
 
     args = parser.parse_args(argsFromInvoker.split(' '))
+
     env = Environment()
 
     RPC_SIZE = args.rpcSizeBytes
 
-    dram_avg_lat = tOffchip + (RB_HIT_RATE/100)*tCAS + (1-(RB_HIT_RATE/100))*(tRP+tRAS+tCAS)
+    #dram_avg_lat = tOffchip + (RB_HIT_RATE/100)*tCAS + (1-(RB_HIT_RATE/100))*(tRP+tRAS+tCAS)
+    dram_avg_lat = 45
     #print('Avg DRAM lat:',dram_avg_lat)
     #print('Naive DRAM estimate BW:',64/dram_avg_lat * 8)
 
@@ -472,16 +479,46 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     # Buffer space compared to LLC size
     BDP = float(args.BWGbps)/8.0 * 1000 # Gbps/8 * ns = bytes
     if args.singleBuffer is True:
-        BufSpace = BDP
+        #BufSpace = BDP
+        BufSpace = 327e3
     else:
-        BufSpace = N_connections * BDP
-    LLCSpace = 1.5e6*args.NumberOfCores # 1.5MB/core, Xeon Scalable
+        BufSpace = args.servers * args.rpcSizeBytes * 256 * 2
+        #BufSpace = N_connections * BDP
+    LLCSpace = 45e6 # mica++
 
     # Prob NI does DDIO into cache
     if BufSpace <= LLCSpace:
         p_ddio = 100
     else:
         p_ddio = (float(LLCSpace) / BufSpace)*100
+
+    if args.calcBW is True:
+        t_f = 0.0 # fixed on-chip lat
+        print('----Calculating total expected DRAM BW for parameters...'
+                ,'NI BW (Gbps)',args.BWGbps
+                ,'Lambda:',args.LambdaArrivalRate
+                ,'Serv time:',args.serv_time
+                ,'P(LLC hit):',p_ddio)
+        # calculate load level A = arr. rate / serv. rate of single core
+        pkts_per_rpc = ceil(RPC_SIZE / 64)
+        arr_rate = float(args.BWGbps)/8.0/64 / pkts_per_rpc # unit: Grpcs/s
+        serv_rate = 1.0/float(args.serv_time) # unit: Grpcs/s
+        A = arr_rate / serv_rate
+
+        # calculate exp. bandwidth
+        rpc_lambda = args.LambdaArrivalRate * pkts_per_rpc # LambdaArrivalRate represents packets, only equals rpc for single-packet
+        bw_ni = RPC_SIZE / rpc_lambda
+        bw_pay_read = A*((RPC_SIZE / float(args.serv_time + t_f)) * (1-(p_ddio/100.0)))
+        bw_mica = A*(RPC_SIZE / float(args.serv_time))
+        #bw_pref = A*(RPC_SIZE / float(args.serv_time))
+        bw_pref = 0.0
+        #bw_sends = A*((RPC_SIZE / float(args.serv_time + t_f)) * (1-(p_ddio/100.0)))
+        bw_sends = 0.0
+        bw_tot = bw_ni + bw_pay_read + bw_mica + bw_pref + bw_sends
+        print('ni=',bw_ni,'pay_read=',bw_pay_read,'mica=',bw_mica,'bw_pref=',bw_pref,'bw_sends=',bw_sends)
+        print('Total exp. BW (GB/s)',bw_tot)
+        print('------------------------------------------')
+        return (bw_tot)
 
     print('[NEW JOB: BW',args.BWGbps,', lambda',args.LambdaArrivalRate,'BDP',BDP,'Buffer space(MB)',BufSpace/1e6,', LLC Size(MB)',LLCSpace/1e6,'Prob DDIO hit',p_ddio,']')
 
