@@ -9,6 +9,7 @@ from .LatencyTracker import ExactLatencyTracker
 from hdrh.histogram import HdrHistogram
 from random import randint
 from math import floor,ceil
+from numpy.random import exponential as exp_arrival
 
 # Relative path required to have ./p3 and ./my_simpy in same dir
 import sys
@@ -42,6 +43,13 @@ def getServiceTimes(latStore):
     percentiles = [ 50, 95, 99, 99.9 ]
     vals = [ latStore.get_value_at_percentile(p) for p in percentiles ]
     return zip(percentiles,vals)
+
+# Prob_ddio can be float, round down
+def rollHit(prob_ddio):
+    rand_ddiohit = randint(0,100)
+    if rand_ddiohit < int(prob_ddio):
+        return True
+    return False
 
 class RPC(object):
     def __init__(self,n,d,llc_hit):
@@ -239,12 +247,6 @@ class NI(object):
         self.dataplane_dispatch = dataplanes
         self.action = env.process(self.run())
 
-    def rollHit(self):
-        rand_ddiohit = randint(0,100)
-        if rand_ddiohit <= self.prob_ddio:
-            return True
-        return False
-
     def selectQueue(self):
         # Pick a queue statically, return it to the caller
         if self.dataplane_dispatch is True:
@@ -258,7 +260,7 @@ class NI(object):
         numSimulated = 0
         while numSimulated < self.numRPCs:
             try:
-                ddio_hit = self.rollHit()
+                ddio_hit = rollHit(self.prob_ddio)
                 the_queue_to_dispatch = self.selectQueue()
                 if ddio_hit is True:
                     num_reqs = floor(self.RPCSize / 64)
@@ -272,9 +274,13 @@ class NI(object):
                     # Launch a multi-packet request to memory, dispatch when it is done.
                     payloadsDoneEvent = self.env.event()
                     payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,the_queue_to_dispatch,numSimulated)
+                    # Roll hit probability, and if fail, do a writeback
+                    hit_clean = rollHit(self.prob_ddio)
+                    if hit_clean is False:
+                        AsyncMemoryRequest(self.env, self.queues, self.RPCSize)
                     yield payloadsDoneEvent # all payloads written
 
-                yield self.env.timeout(self.myLambda)
+                yield self.env.timeout(exp_arrival(self.myLambda))
                 numSimulated += 1
             except Interrupt as i:
                 print("NI killed with Simpy exception:",i,"....EoSim")
@@ -285,7 +291,7 @@ class NI(object):
         # After the dispatch is done, keep generating the traffic for realistic measurements.
         while True:
             try:
-                ddio_hit = self.rollHit()
+                ddio_hit = rollHit(self.prob_ddio)
                 if ddio_hit is True:
                     num_reqs = floor(self.RPCSize / 64)
                     for i in range(num_reqs):
@@ -423,6 +429,11 @@ class ClosedLoopRPCGenerator(object):
             #yield buffersReadEvent # wait for all requests to return
             AsyncMemoryRequest(self.env, self.queues, self.RPCSize)
 
+            # Roll hit probability, and if fail, do a writeback
+            hit_clean = rollHit(self.p_hit)
+            if hit_clean is False:
+                AsyncMemoryRequest(self.env, self.queues, self.RPCSize)
+
             # RPC is done
             rpc.end_proc_time = self.env.now
 
@@ -494,7 +505,9 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
         #BufSpace = BDP
         BufSpace = 327e3
     else:
-        BufSpace = args.servers * args.rpcSizeBytes * 256 * 2
+        # Each buffer has (servers*rpcSizeBytes * 256 msgs), and there is 1 of them
+        # for receiving, and (servers) of them for sending
+        BufSpace = (args.servers * args.rpcSizeBytes * 256) * (args.servers+1)
         #BufSpace = N_connections * BDP
     LLCSpace = 45e6 # mica++
 
@@ -532,7 +545,7 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
         print('------------------------------------------')
         return (bw_tot)
 
-    print('[NEW JOB: BW',args.BWGbps,', lambda',args.LambdaArrivalRate,'BDP',BDP,'Buffer space(MB)',BufSpace/1e6,', LLC Size(MB)',LLCSpace/1e6,'Prob DDIO hit',p_ddio,']')
+    print('[NEW JOB: BW',args.BWGbps,', lambda',args.LambdaArrivalRate,'BDP',BDP,'Buffer space(MB)',BufSpace/1e6,', LLC Size(MB)',LLCSpace/1e6,'DDIO hit percentage',p_ddio,'%]')
 
     # Create N queues, one per DRAM channel
     if args.NumQueueSlots == -1:
