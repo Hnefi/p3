@@ -228,14 +228,15 @@ class AsyncMemoryRequest(object):
             #print('asyncmemreqest activating at',self.env.now)
 
 class NI(object):
-    def __init__(self,env,ArrivalRate,resource_queues,p_ddio,RPCSize,dispatch_queue,N):
+    def __init__(self,env,ArrivalRate,resource_queues,p_ddio,RPCSize,dispatch_queues,N,dataplanes):
         self.env = env
         self.queues = resource_queues
         self.myLambda = ArrivalRate
         self.prob_ddio = p_ddio
-        self.dispatch_queue = dispatch_queue
+        self.dispatch_queues = dispatch_queues
         self.RPCSize = RPCSize
         self.numRPCs = N
+        self.dataplane_dispatch = dataplanes
         self.action = env.process(self.run())
 
     def rollHit(self):
@@ -244,11 +245,21 @@ class NI(object):
             return True
         return False
 
+    def selectQueue(self):
+        # Pick a queue statically, return it to the caller
+        if self.dataplane_dispatch is True:
+            the_q_idx = randint(0,len(self.dispatch_queues)-1)
+        else:
+            the_q_idx = 0
+        #print('NI dispatcher sending req to queue:',the_q_idx)
+        return self.dispatch_queues[the_q_idx]
+
     def run(self):
         numSimulated = 0
         while numSimulated < self.numRPCs:
             try:
                 ddio_hit = self.rollHit()
+                the_queue_to_dispatch = self.selectQueue()
                 if ddio_hit is True:
                     num_reqs = floor(self.RPCSize / 64)
                     for i in range(num_reqs):
@@ -256,11 +267,11 @@ class NI(object):
                             yield self.env.timeout(self.myLambda)
                     newRPC = RPC(numSimulated,self.env.now,ddio_hit)
                     #print('HIT: NI dispatched rpc num',numSimulated,'at time',self.env.now)
-                    yield self.dispatch_queue.put(newRPC)
+                    yield the_queue_to_dispatch.put(newRPC)
                 else:
                     # Launch a multi-packet request to memory, dispatch when it is done.
                     payloadsDoneEvent = self.env.event()
-                    payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,self.dispatch_queue,numSimulated)
+                    payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,the_queue_to_dispatch,numSimulated)
                     yield payloadsDoneEvent # all payloads written
 
                 yield self.env.timeout(self.myLambda)
@@ -269,7 +280,7 @@ class NI(object):
                 print("NI killed with Simpy exception:",i,"....EoSim")
                 return
 
-        yield self.dispatch_queue.put(EndOfMeasurements())
+        yield self.dispatch_queues[0].put(EndOfMeasurements()) # Only put 1 EndOfMeasurements() event.
 
         # After the dispatch is done, keep generating the traffic for realistic measurements.
         while True:
@@ -281,9 +292,9 @@ class NI(object):
                         if i < (num_reqs-1):
                             yield self.env.timeout(self.myLambda)
                 else:
-                    # Launch a multi-packet request to memory, dispatch when it is done.
+                    # Launch a multi-packet request to memory, but don't dispatch it
                     payloadsDoneEvent = self.env.event()
-                    payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,self.dispatch_queue,numSimulated,no_dispatch=True)
+                    payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,self.dispatch_queues[0],numSimulated,no_dispatch=True)
                     yield payloadsDoneEvent # all payloads written
 
                 yield self.env.timeout(self.myLambda)
@@ -458,6 +469,7 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     parser.add_argument('--printDRAMBW', dest='printDRAMBW', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to print DRAM BW characteristics post-run.')
     parser.add_argument('--micaPrefetch', dest='micaPrefetch', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to model MICA prefetching (roughly doubles BW utilization).')
     parser.add_argument('--calc_bw', dest='calcBW', type=bool,default=False,help='Just print the BW of a configuration, dont simulate anything.')
+    parser.add_argument("--dataplanes", dest='dataplanes',type=str2bool,default=False, const=True,nargs='?',help="If true, model a dataplanes system (N queues x 1). Default = False.")
 
     args = parser.parse_args(argsFromInvoker.split(' '))
 
@@ -528,23 +540,27 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     else:
         DRAMChannels = [Server(env,args.BanksPerChannel,args.NumQueueSlots) for i in range(args.NumberOfChannels)]
 
-    # Dispatch qeuue
-    dispatch_queue = Store(env) # FIXME: infinite length -> drop
+    # Create 1 single dispatch queue or N queues if running in dataplane mode
+    # FIXME: Need to make these finite-length queues for more detailed simulation
+    if args.dataplanes is True:
+        disp_queues = [ Store(env) for i in range(args.NumberOfCores) ]
+    else:
+        disp_queues = [ Store(env) ]
 
-    # NI antagonist
-    NIDevice = NI(env,args.LambdaArrivalRate,DRAMChannels,p_ddio,RPC_SIZE,dispatch_queue,args.NumRPCs)
+    # NI BW generator/dispatcher
+    NIDevice = NI(env,args.LambdaArrivalRate,DRAMChannels,p_ddio,RPC_SIZE,disp_queues,args.NumRPCs,args.dataplanes)
 
     # create rpc generator
-    CPUsModel = [ClosedLoopRPCGenerator(env,DRAMChannels,latencyStore,args.serv_time,NIDevice,i,MAX_STIME_NS,dispatch_queue,p_ddio,RPC_SIZE,args.numMemRequests,dram_avg_lat,args.micaPrefetch) for i in range(args.NumberOfCores)]
+    if args.dataplanes is True:
+        # Each core gets a private queue
+        CPUsModel = [ClosedLoopRPCGenerator(env,DRAMChannels,latencyStore,args.serv_time,NIDevice,i,MAX_STIME_NS,disp_queues[i],p_ddio,RPC_SIZE,args.numMemRequests,dram_avg_lat,args.micaPrefetch) for i in range(args.NumberOfCores)]
+    else:
+        # All core models get the same queue
+        CPUsModel = [ClosedLoopRPCGenerator(env,DRAMChannels,latencyStore,args.serv_time,NIDevice,i,MAX_STIME_NS,disp_queues[0],p_ddio,RPC_SIZE,args.numMemRequests,dram_avg_lat,args.micaPrefetch) for i in range(args.NumberOfCores)]
 
     env.run()
 
-    # print dram BW
-    #if args.printDRAMBW is True:
-        #dramChannelBW_Lists = [ ch.getIntervalBandwidths() for ch in DRAMChannels ] # list of lists
-        #for ch in dramChannelBW_Lists:
-            #print(ch)
-
+    # Get/print DRAM BWs if option enabled.
     dramChannelBW_Lists = [ ch.getIntervalBandwidths() for ch in DRAMChannels ] # list of lists
     def avgBW(l):
         return sum(l,0.0)/len(l)

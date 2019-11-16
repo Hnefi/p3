@@ -12,20 +12,22 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["sweep_NI"])
     parser.add_argument("mem", help="Type of memory system (affects channel count and total BW)",choices=["DDR4","HBM"])
-    parser.add_argument("--threads", type=int,help="Number of parallel threads to use",default = 1)
-    parser.add_argument("--n", type=int,help="Number of rpcs to simulate",default = 10)
-    parser.add_argument("--channels", type=int,help="Number of DRAM channels",default = 4)
-    parser.add_argument("--cores", type=int,help="Number of cores/RPC servers",default = 60)
-    parser.add_argument("--nodes", type=int,help="Number of nodes in the whole system to consider.",default=1000)
-    parser.add_argument("--lowBW", type=int,help="Lower bound of network BW to run.",default=40)
-    parser.add_argument("--highBW", type=int,help="Upper bound of network BW to run.",default=1000)
-    parser.add_argument("--dataPoints", type=int,help="Number of data points",default=30)
-    parser.add_argument("--serv_time", type=int,help="Total RPC Service time to model (ns)",default=300)
-    parser.add_argument("--reqsPerRPC", type=int,help="Number of memory requests per RPC to model",default=2)
-    parser.add_argument('--rpcSizeBytes', type=int, default=256,help='Number of bytes making up each RPC\'s argument/return buffer.')
-    parser.add_argument("--singleBuffer", dest='singleBuffer',default=False, action='store_true',help="If true, use single receive buffer (opportunity study)")
-    parser.add_argument("--printDRAMBW", dest='printDRAMBW',default=False, action='store_true',help="Whether or not to print DRAM BW characteristics post-run.")
-    parser.add_argument("--micaPrefetch", dest='micaPrefetch',default=False, action='store_true',help="Whether the RPCs themselves model aggressive MICA prefetching.")
+    parser.add_argument("--threads", type=int,help="Number of parallel threads to use. Default = 1",default = 1)
+    parser.add_argument("--n", type=int,help="Number of rpcs to simulate. Default = 10",default = 10)
+    parser.add_argument("--channels", type=int,help="Number of DRAM channels. Default = 4",default = 4)
+    parser.add_argument("--cores", type=int,help="Number of cores/RPC servers. Default  = 60",default = 60)
+    parser.add_argument("--nodes", type=int,help="Number of nodes in the whole system to consider. Default = 1024",default=1024)
+    parser.add_argument("--lowBW", type=int,help="Lower bound of network BW to run. Default = 40Gbps",default=40)
+    parser.add_argument("--highBW", type=int,help="Upper bound of network BW to run. Default = 1000Gbps",default=1000)
+    parser.add_argument("--dataPoints", type=int,help="Number of data points between [lowBW,highBW]. Default = 30",default=30)
+    parser.add_argument("--serv_time", type=int,help="Total RPC Service time to model (ns). Default = 425",default=425)
+    parser.add_argument("--reqsPerRPC", type=int,help="Number of memory requests per RPC to model. Default = 2",default=2)
+    parser.add_argument('--rpcSizeBytes', type=int, default=256,help='Number of bytes making up each RPC\'s argument/return buffer. Default = 256')
+    parser.add_argument("--singleBuffer", dest='singleBuffer',default=False, action='store_true',help="If true, use single receive buffer (opportunity study). Default = False")
+    parser.add_argument("--printDRAMBW", dest='printDRAMBW',default=False, action='store_true',help="Whether or not to print DRAM BW characteristics post-run.. Default = False")
+    parser.add_argument("--micaPrefetch", dest='micaPrefetch',default=False, action='store_true',help="Whether the RPCs themselves model aggressive MICA prefetching.. Default = False")
+    parser.add_argument("--dataplanes", dest='dataplanes',default=False, action='store_true',help="If true, model a dataplanes system (N queues x 1). Default = False.")
+    parser.add_argument("--ofile", dest='ofile',nargs='?',default='qsweep.csv',help="The ouput file to write.")
     args = parser.parse_args()
 
     def check_arg(arg, msg):
@@ -51,7 +53,8 @@ def main():
                             'printDRAMBW':args.printDRAMBW,
                             'micaPrefetch':args.micaPrefetch,
                             'rpcSizeBytes':args.rpcSizeBytes,
-                            'N_rpcs' : args.n
+                            'N_rpcs' : args.n,
+                            'dataplanes' : args.dataplanes
                             }
         else:
             invokerArgs = { 'numProcs': int(args.threads),
@@ -68,7 +71,8 @@ def main():
                             'printDRAMBW':args.printDRAMBW,
                             'micaPrefetch':args.micaPrefetch,
                             'rpcSizeBytes':args.rpcSizeBytes,
-                            'N_rpcs' : args.n
+                            'N_rpcs' : args.n,
+                            'dataplanes' : args.dataplanes
                             }
 
     threadController = Invoker( **invokerArgs )
@@ -103,14 +107,11 @@ def main():
     output_fields.append('n_dropped')
     output_fields.append('Avg. DRAM BW')
 
-    if args.singleBuffer is True:
-        bstring = '_singleBufferBDP'
-    else:
-        bstring = ''
-
     # backup old file
-    fstring = 'queueing'+args.mode+'_'+args.mem+'_'+str(args.nodes)+'Nodes'+bstring+'.csv'
+    #fstring = 'queueing'+args.mode+'_'+args.mem+'_'+str(args.nodes)+'Nodes'+bstring+'.csv'
+    fstring = args.ofile
     if isfile(fstring):
+        print(fstring,"already present! Backing up to...",fstring+'.bak')
         copyfile(fstring,fstring+'.bak')
 
     with open(fstring,'w') as fh:
