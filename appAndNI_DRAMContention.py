@@ -27,7 +27,9 @@ def main():
     parser.add_argument("--printDRAMBW", dest='printDRAMBW',default=False, action='store_true',help="Whether or not to print DRAM BW characteristics post-run.. Default = False")
     parser.add_argument("--micaPrefetch", dest='micaPrefetch',default=False, action='store_true',help="Whether the RPCs themselves model aggressive MICA prefetching.. Default = False")
     parser.add_argument("--dataplanes", dest='dataplanes',default=False, action='store_true',help="If true, model a dataplanes system (N queues x 1). Default = False.")
+    parser.add_argument("--collect_qdat", dest='collect_qdat',default=False, action='store_true',help="If true, collect data to measure queue depths and queueing times. Default = False.")
     parser.add_argument("--ofile", dest='ofile',nargs='?',default='qsweep.csv',help="The ouput file to write.")
+    parser.add_argument("--odir_qdata", dest='odir_qdata',nargs='?',default='queue_data/',help="The ouput directory to write queueing statstics to.")
     args = parser.parse_args()
 
     def check_arg(arg, msg):
@@ -54,6 +56,7 @@ def main():
                             'micaPrefetch':args.micaPrefetch,
                             'rpcSizeBytes':args.rpcSizeBytes,
                             'N_rpcs' : args.n,
+                            'collect_qdat' : args.collect_qdat,
                             'dataplanes' : args.dataplanes
                             }
         else:
@@ -72,6 +75,7 @@ def main():
                             'micaPrefetch':args.micaPrefetch,
                             'rpcSizeBytes':args.rpcSizeBytes,
                             'N_rpcs' : args.n,
+                            'collect_qdat' : args.collect_qdat,
                             'dataplanes' : args.dataplanes
                             }
 

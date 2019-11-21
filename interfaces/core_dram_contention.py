@@ -156,7 +156,7 @@ class SingleMemoryRequest(object):
 
 # Also a separate process to run independently to the above requester
 class RPCDispatchRequest(object):
-    def __init__(self,env,resource_queues,sz,eventCompletion,interRequestTime,dispatch_q,rnum,no_dispatch=False):
+    def __init__(self,env,resource_queues,sz,eventCompletion,interRequestTime,dispatch_q,rnum,rpc_q_dat_array,q_idx,no_dispatch=False):
         self.env = env
         self.queues = resource_queues
         self.size = sz
@@ -164,7 +164,9 @@ class RPCDispatchRequest(object):
         self.eventCompletion = eventCompletion
         self.dispatch_queue = dispatch_q
         self.num = rnum
+        self.q_idx = q_idx
         self.no_dispatch = no_dispatch
+        self.rpc_q_dat_array = rpc_q_dat_array
         self.action = self.env.process(self.run())
 
     def run(self):
@@ -186,6 +188,8 @@ class RPCDispatchRequest(object):
                 yield eventArray[i]
                 #print('RPC',self.num,'activating event at',self.env.now)
             newRPC = RPC(self.num,self.env.now,False) # ddio miss on writing payloads to dram
+            self.rpc_q_dat_array.append((self.num,self.q_idx,len(self.dispatch_queue.items)))
+            #print(self.q_idx,len(self.dispatch_queue.items))
             yield self.dispatch_queue.put(newRPC)
 
 class SyncOverlappedMemoryRequest(object):
@@ -236,7 +240,7 @@ class AsyncMemoryRequest(object):
             #print('asyncmemreqest activating at',self.env.now)
 
 class NI(object):
-    def __init__(self,env,ArrivalRate,resource_queues,p_ddio,RPCSize,dispatch_queues,N,dataplanes):
+    def __init__(self,env,ArrivalRate,resource_queues,p_ddio,RPCSize,dispatch_queues,N,dataplanes):#,write_qdat_csv,qdat_csv_fname):
         self.env = env
         self.queues = resource_queues
         self.myLambda = ArrivalRate
@@ -245,7 +249,18 @@ class NI(object):
         self.RPCSize = RPCSize
         self.numRPCs = N
         self.dataplane_dispatch = dataplanes
+
+        # Data array containing tuples to be written to a queue depth CSV in the following format:
+        #   <rpc num>,<q_num>,<q_depth>
+        self.rpc_q_dat_array = []
         self.action = env.process(self.run())
+
+    # Sort the q dat array by q_depth
+    def get99th_queued(self):
+        sorted_by_q_depth = sorted(self.rpc_q_dat_array, key=lambda tup: tup[2])
+        idx_tail = floor(len(sorted_by_q_depth)*.99)
+        #print('Sorted by q_depth',sorted_by_q_depth)
+        return sorted_by_q_depth[idx_tail][2]
 
     def selectQueue(self):
         # Pick a queue statically, return it to the caller
@@ -254,26 +269,27 @@ class NI(object):
         else:
             the_q_idx = 0
         #print('NI dispatcher sending req to queue:',the_q_idx)
-        return self.dispatch_queues[the_q_idx]
+        return the_q_idx,self.dispatch_queues[the_q_idx]
 
     def run(self):
         numSimulated = 0
         while numSimulated < self.numRPCs:
             try:
                 ddio_hit = rollHit(self.prob_ddio)
-                the_queue_to_dispatch = self.selectQueue()
+                q_idx,the_queue_to_dispatch = self.selectQueue()
                 if ddio_hit is True:
                     num_reqs = floor(self.RPCSize / 64)
                     for i in range(num_reqs):
                         if i < (num_reqs-1):
                             yield self.env.timeout(self.myLambda)
                     newRPC = RPC(numSimulated,self.env.now,ddio_hit)
-                    #print('HIT: NI dispatched rpc num',numSimulated,'at time',self.env.now)
+                    self.rpc_q_dat_array.append((numSimulated,q_idx,len(the_queue_to_dispatch.items)))
+                    #print(q_idx,len(the_queue_to_dispatch.items))
                     yield the_queue_to_dispatch.put(newRPC)
                 else:
                     # Launch a multi-packet request to memory, dispatch when it is done.
                     payloadsDoneEvent = self.env.event()
-                    payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,the_queue_to_dispatch,numSimulated)
+                    payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,the_queue_to_dispatch,numSimulated,self.rpc_q_dat_array,q_idx)
                     # Roll hit probability, and if fail, do a writeback
                     hit_clean = rollHit(self.prob_ddio)
                     if hit_clean is False:
@@ -300,7 +316,7 @@ class NI(object):
                 else:
                     # Launch a multi-packet request to memory, but don't dispatch it
                     payloadsDoneEvent = self.env.event()
-                    payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,self.dispatch_queues[0],numSimulated,no_dispatch=True)
+                    payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,self.dispatch_queues[0],numSimulated,self.rpc_q_dat_array,0,no_dispatch=True)
                     yield payloadsDoneEvent # all payloads written
 
                 yield self.env.timeout(self.myLambda)
@@ -388,25 +404,6 @@ class ClosedLoopRPCGenerator(object):
             #print('core',self.cid,'got rpc #',rpcNumber,'from the dispatch queue at time',self.env.now,'dispatch time',rpc.dispatch_time)
             rpc.start_proc_time = self.env.now
 
-            """
-            ### DEPRECATED: Reads are LLC fulfilled (they were just written by the NI)
-            # model buffer reads
-            num_reqs = floor(self.RPCSize / 64)
-            if rpc.hit is True:
-                for i in range(num_reqs):
-                    yield self.env.timeout(1)
-            else:
-                buffersReadEvent = self.env.event()
-                #print('rpc went to sleep at time',self.env.now)
-                physBufferReader = SyncOverlappedMemoryRequest(self.env,self.queues,self.RPCSize,buffersReadEvent)
-                yield buffersReadEvent # wait for all requests to return
-                #print('Re-woke up rpc at time',self.env.now)
-
-            #do prefetch for next rpc packet
-            if self.prefetch is True:
-                pf = AsyncMemoryRequest(self.env, self.queues, self.RPCSize)
-            """
-
             # Model MICA rpcs. Assumptions:
             #   - first access is synchronous (must access the index)
             #   - all other accesses are parallel (overlapped loads for GETS or stores for PUTS)
@@ -481,6 +478,7 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     parser.add_argument('--micaPrefetch', dest='micaPrefetch', type=str2bool,default=False,const=True,nargs='?',help='Whether or not to model MICA prefetching (roughly doubles BW utilization).')
     parser.add_argument('--calc_bw', dest='calcBW', type=bool,default=False,help='Just print the BW of a configuration, dont simulate anything.')
     parser.add_argument("--dataplanes", dest='dataplanes',type=str2bool,default=False, const=True,nargs='?',help="If true, model a dataplanes system (N queues x 1). Default = False.")
+    parser.add_argument("--collect_qdat", dest='collect_qdat',type=str2bool,default=False, const=True,nargs='?',help="If true, collect data to measure queue depths and queueing times. Default = False.")
 
     args = parser.parse_args(argsFromInvoker.split(' '))
 
@@ -573,6 +571,10 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
 
     env.run()
 
+    # Get the 99th percentile of number of queued rpcs from the NIDevice, which was stored there
+    tail_queued = NIDevice.get99th_queued()
+    #print('Tail queued = ',tail_queued)
+
     # Get/print DRAM BWs if option enabled.
     dramChannelBW_Lists = [ ch.getIntervalBandwidths() for ch in DRAMChannels ] # list of lists
     def avgBW(l):
@@ -582,5 +584,5 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     perCh_averages = [ avgBW(ch) for ch in dramChannelBW_Lists ]
     if args.printDRAMBW is True:
         print('DRAM channel bandwidths for job (',args.BWGbps,'):',perCh_averages)
-    retList = [ getServiceTimes(latencyStore), 0, sum(perCh_averages) ]
+    retList = [ getServiceTimes(latencyStore), 0, sum(perCh_averages), tail_queued ]
     return retList
