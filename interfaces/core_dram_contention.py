@@ -156,7 +156,7 @@ class SingleMemoryRequest(object):
 
 # Also a separate process to run independently to the above requester
 class RPCDispatchRequest(object):
-    def __init__(self,env,resource_queues,sz,eventCompletion,interRequestTime,dispatch_q,rnum,rpc_q_dat_array,q_idx,no_dispatch=False):
+    def __init__(self,env,resource_queues,sz,eventCompletion,interRequestTime,dispatch_q,rnum,rpc_q_dat_array,q_idx,collect_qdat,no_dispatch=False):
         self.env = env
         self.queues = resource_queues
         self.size = sz
@@ -167,6 +167,7 @@ class RPCDispatchRequest(object):
         self.q_idx = q_idx
         self.no_dispatch = no_dispatch
         self.rpc_q_dat_array = rpc_q_dat_array
+        self.collect_qdat = collect_qdat
         self.action = self.env.process(self.run())
 
     def run(self):
@@ -188,8 +189,8 @@ class RPCDispatchRequest(object):
                 yield eventArray[i]
                 #print('RPC',self.num,'activating event at',self.env.now)
             newRPC = RPC(self.num,self.env.now,False) # ddio miss on writing payloads to dram
-            self.rpc_q_dat_array.append((self.num,self.q_idx,len(self.dispatch_queue.items)))
-            #print(self.q_idx,len(self.dispatch_queue.items))
+            if self.collect_qdat is True:
+                self.rpc_q_dat_array.append((self.num,self.q_idx,len(self.dispatch_queue.items)))
             yield self.dispatch_queue.put(newRPC)
 
 class SyncOverlappedMemoryRequest(object):
@@ -240,7 +241,7 @@ class AsyncMemoryRequest(object):
             #print('asyncmemreqest activating at',self.env.now)
 
 class NI(object):
-    def __init__(self,env,ArrivalRate,resource_queues,p_ddio,RPCSize,dispatch_queues,N,dataplanes):#,write_qdat_csv,qdat_csv_fname):
+    def __init__(self,env,ArrivalRate,resource_queues,p_ddio,RPCSize,dispatch_queues,N,dataplanes,collect_qdat):#,write_qdat_csv,qdat_csv_fname):
         self.env = env
         self.queues = resource_queues
         self.myLambda = ArrivalRate
@@ -249,6 +250,7 @@ class NI(object):
         self.RPCSize = RPCSize
         self.numRPCs = N
         self.dataplane_dispatch = dataplanes
+        self.collect_qdat = collect_qdat
 
         # Data array containing tuples to be written to a queue depth CSV in the following format:
         #   <rpc num>,<q_num>,<q_depth>
@@ -283,13 +285,14 @@ class NI(object):
                         if i < (num_reqs-1):
                             yield self.env.timeout(self.myLambda)
                     newRPC = RPC(numSimulated,self.env.now,ddio_hit)
-                    self.rpc_q_dat_array.append((numSimulated,q_idx,len(the_queue_to_dispatch.items)))
+                    if self.collect_qdat is True:
+                        self.rpc_q_dat_array.append((numSimulated,q_idx,len(the_queue_to_dispatch.items)))
                     #print(q_idx,len(the_queue_to_dispatch.items))
                     yield the_queue_to_dispatch.put(newRPC)
                 else:
                     # Launch a multi-packet request to memory, dispatch when it is done.
                     payloadsDoneEvent = self.env.event()
-                    payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,the_queue_to_dispatch,numSimulated,self.rpc_q_dat_array,q_idx)
+                    payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,the_queue_to_dispatch,numSimulated,self.rpc_q_dat_array,q_idx,self.collect_qdat)
                     # Roll hit probability, and if fail, do a writeback
                     hit_clean = rollHit(self.prob_ddio)
                     if hit_clean is False:
@@ -316,7 +319,7 @@ class NI(object):
                 else:
                     # Launch a multi-packet request to memory, but don't dispatch it
                     payloadsDoneEvent = self.env.event()
-                    payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,self.dispatch_queues[0],numSimulated,self.rpc_q_dat_array,0,no_dispatch=True)
+                    payloadWrite = RPCDispatchRequest(self.env, self.queues, self.RPCSize, payloadsDoneEvent, self.myLambda,self.dispatch_queues[0],numSimulated,self.rpc_q_dat_array,0,self.collect_qdat,no_dispatch=True)
                     yield payloadsDoneEvent # all payloads written
 
                 yield self.env.timeout(self.myLambda)
@@ -325,7 +328,7 @@ class NI(object):
                 return
 
 class ClosedLoopRPCGenerator(object):
-    def __init__(self,env,sharedQueues,latStore,mean_service_time,NIToInterrupt,i,max_stime_ns,dispatch_queue,p_ddio,sz,num_mem_reqs,amat,micaPrefetch):
+    def __init__(self,env,sharedQueues,latStore,mean_service_time,NIToInterrupt,i,max_stime_ns,dispatch_queue,p_ddio,sz,num_mem_reqs,amat,micaPrefetch,isParent=False):
         self.env = env
         self.queues = sharedQueues
         self.latencyStore = latStore
@@ -356,7 +359,8 @@ class ClosedLoopRPCGenerator(object):
             self.isMaster = True
         else:
             self.isMaster = False
-        self.action = env.process(self.run())
+        if isParent is False:
+            self.action = env.process(self.run())
 
     def putSTime(self,time):
         self.lastFiveSTimes.append(time)
@@ -452,6 +456,98 @@ class ClosedLoopRPCGenerator(object):
                 self.endSimUnstable()
             self.numSimulated += 1
 
+class FixedServTimeRPCGenerator(ClosedLoopRPCGenerator):
+    def __init__(self,env,sharedQueues,latStore,mean_service_time,NIToInterrupt,i,max_stime_ns,dispatch_queue,p_ddio,sz,num_mem_reqs,amat,micaPrefetch):
+        super().__init__(env,sharedQueues,latStore,mean_service_time,NIToInterrupt,i,max_stime_ns,dispatch_queue,p_ddio,sz,num_mem_reqs,amat,micaPrefetch,True)
+        self.fixed_stime = mean_service_time
+        self.action = env.process(self.run())
+
+    def run(self):
+        while self.killed is False:
+            # Start new RPC
+            rpc = yield self.dispatch_queue.get()
+            if isinstance(rpc,EndOfMeasurements):
+                #print('End of simulation received by core',self.cid,', interrupting NI')
+                self.endSimGraceful()
+                continue
+
+            rpc.start_proc_time = self.env.now
+
+            # Wait for a fixed time.
+            yield self.env.timeout(self.fixed_stime)
+            rpc.completion_time = self.env.now
+            total_time = rpc.getTotalServiceTime()
+
+            self.latencyStore.record_value(total_time)
+            self.putSTime(total_time)
+            if self.isMaster is True and self.isSimulationUnstable() is True:
+                print('Simulation was unstable, last five service times from core 0 were:',self.lastFiveSTimes,', killing sim.')
+                self.endSimUnstable()
+            self.numSimulated += 1
+
+class ExpServTimeRPCGenerator(ClosedLoopRPCGenerator):
+    def __init__(self,env,sharedQueues,latStore,mean_service_time,NIToInterrupt,i,max_stime_ns,dispatch_queue,p_ddio,sz,num_mem_reqs,amat,micaPrefetch):
+        super().__init__(env,sharedQueues,latStore,mean_service_time,NIToInterrupt,i,max_stime_ns,dispatch_queue,p_ddio,sz,num_mem_reqs,amat,micaPrefetch,True)
+        self.exp_stime = mean_service_time
+        self.action = env.process(self.run())
+
+    def run(self):
+        while self.killed is False:
+            # Start new RPC
+            rpc = yield self.dispatch_queue.get()
+            if isinstance(rpc,EndOfMeasurements):
+                #print('End of simulation received by core',self.cid,', interrupting NI')
+                self.endSimGraceful()
+                continue
+
+            rpc.start_proc_time = self.env.now
+
+            # Wait for a fixed time.
+            yield self.env.timeout(exp_arrival(self.exp_stime))
+            rpc.completion_time = self.env.now
+            total_time = rpc.getTotalServiceTime()
+
+            self.latencyStore.record_value(total_time)
+            self.putSTime(total_time)
+            if self.isMaster is True and self.isSimulationUnstable() is True:
+                print('Simulation was unstable, last five service times from core 0 were:',self.lastFiveSTimes,', killing sim.')
+                self.endSimUnstable()
+            self.numSimulated += 1
+
+class BimodalServTimeRPCGenerator(ClosedLoopRPCGenerator):
+    def __init__(self,env,sharedQueues,latStore,mean_service_time,NIToInterrupt,i,max_stime_ns,dispatch_queue,p_ddio,sz,num_mem_reqs,amat,micaPrefetch):
+        super().__init__(env,sharedQueues,latStore,mean_service_time,NIToInterrupt,i,max_stime_ns,dispatch_queue,p_ddio,sz,num_mem_reqs,amat,micaPrefetch,True)
+        self.mean_stime = mean_service_time
+        self.action = env.process(self.run())
+
+    def run(self):
+        while self.killed is False:
+            # Start new RPC
+            rpc = yield self.dispatch_queue.get()
+            if isinstance(rpc,EndOfMeasurements):
+                #print('End of simulation received by core',self.cid,', interrupting NI')
+                self.endSimGraceful()
+                continue
+
+            rpc.start_proc_time = self.env.now
+
+            # Roll to see if you are in the 10% long ones, or 90% short ones.
+            short = rollHit(90)
+            if short:
+                yield self.env.timeout(self.mean_stime / 2)
+            else:
+                yield self.env.timeout(5.5*self.mean_stime)
+
+            rpc.completion_time = self.env.now
+            total_time = rpc.getTotalServiceTime()
+
+            self.latencyStore.record_value(total_time)
+            self.putSTime(total_time)
+            if self.isMaster is True and self.isSimulationUnstable() is True:
+                print('Simulation was unstable, last five service times from core 0 were:',self.lastFiveSTimes,', killing sim.')
+                self.endSimUnstable()
+            self.numSimulated += 1
+
 def str2bool(v):
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
         return True
@@ -459,6 +555,16 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
+
+def rpc_generator_factory(distribution_type,env,DRAMChannels,latencyStore,serv_time,NIDevice,i,MAX_STIME_NS,disp_queues,p_ddio,RPC_SIZE,numMemRequests,dram_avg_lat,micaPrefetch):
+    if distribution_type == 'Fixed':
+        return FixedServTimeRPCGenerator(env,DRAMChannels,latencyStore,serv_time,NIDevice,i,MAX_STIME_NS,disp_queues,p_ddio,RPC_SIZE,numMemRequests,dram_avg_lat,micaPrefetch)
+    elif distribution_type == 'Exponential':
+        return ExpServTimeRPCGenerator(env,DRAMChannels,latencyStore,serv_time,NIDevice,i,MAX_STIME_NS,disp_queues,p_ddio,RPC_SIZE,numMemRequests,dram_avg_lat,micaPrefetch)
+    elif distribution_type == 'Bimodal':
+        return BimodalServTimeRPCGenerator(env,DRAMChannels,latencyStore,serv_time,NIDevice,i,MAX_STIME_NS,disp_queues,p_ddio,RPC_SIZE,numMemRequests,dram_avg_lat,micaPrefetch)
+    else: # MICA
+        return ClosedLoopRPCGenerator(env,DRAMChannels,latencyStore,serv_time,NIDevice,i,MAX_STIME_NS,disp_queues,p_ddio,RPC_SIZE,numMemRequests,dram_avg_lat,micaPrefetch)
 
 def simulateAppAndNI_DRAM(argsFromInvoker):
     parser = argparse.ArgumentParser(description='Run a M*k/D/k/N queueing sim.')
@@ -479,6 +585,7 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
     parser.add_argument('--calc_bw', dest='calcBW', type=bool,default=False,help='Just print the BW of a configuration, dont simulate anything.')
     parser.add_argument("--dataplanes", dest='dataplanes',type=str2bool,default=False, const=True,nargs='?',help="If true, model a dataplanes system (N queues x 1). Default = False.")
     parser.add_argument("--collect_qdat", dest='collect_qdat',type=str2bool,default=False, const=True,nargs='?',help="If true, collect data to measure queue depths and queueing times. Default = False.")
+    parser.add_argument("--dist", dest='stime_dist',default="MICA", help="The type of service time distribution that is implemented by the RPC models. Default = MICA.")
 
     args = parser.parse_args(argsFromInvoker.split(' '))
 
@@ -559,21 +666,23 @@ def simulateAppAndNI_DRAM(argsFromInvoker):
         disp_queues = [ Store(env) ]
 
     # NI BW generator/dispatcher
-    NIDevice = NI(env,args.LambdaArrivalRate,DRAMChannels,p_ddio,RPC_SIZE,disp_queues,args.NumRPCs,args.dataplanes)
+    NIDevice = NI(env,args.LambdaArrivalRate,DRAMChannels,p_ddio,RPC_SIZE,disp_queues,args.NumRPCs,args.dataplanes,args.collect_qdat)
 
     # create rpc generator
     if args.dataplanes is True:
         # Each core gets a private queue
-        CPUsModel = [ClosedLoopRPCGenerator(env,DRAMChannels,latencyStore,args.serv_time,NIDevice,i,MAX_STIME_NS,disp_queues[i],p_ddio,RPC_SIZE,args.numMemRequests,dram_avg_lat,args.micaPrefetch) for i in range(args.NumberOfCores)]
+        CPUsModel = [rpc_generator_factory(args.stime_dist,env,DRAMChannels,latencyStore,args.serv_time,NIDevice,i,MAX_STIME_NS,disp_queues[i],p_ddio,RPC_SIZE,args.numMemRequests,dram_avg_lat,args.micaPrefetch) for i in range(args.NumberOfCores)]
     else:
         # All core models get the same queue
-        CPUsModel = [ClosedLoopRPCGenerator(env,DRAMChannels,latencyStore,args.serv_time,NIDevice,i,MAX_STIME_NS,disp_queues[0],p_ddio,RPC_SIZE,args.numMemRequests,dram_avg_lat,args.micaPrefetch) for i in range(args.NumberOfCores)]
+        CPUsModel = [rpc_generator_factory(args.stime_dist,env,DRAMChannels,latencyStore,args.serv_time,NIDevice,i,MAX_STIME_NS,disp_queues[0],p_ddio,RPC_SIZE,args.numMemRequests,dram_avg_lat,args.micaPrefetch) for i in range(args.NumberOfCores)]
 
     env.run()
 
     # Get the 99th percentile of number of queued rpcs from the NIDevice, which was stored there
-    tail_queued = NIDevice.get99th_queued()
-    #print('Tail queued = ',tail_queued)
+    if args.collect_qdat:
+        tail_queued = NIDevice.get99th_queued()
+    else:
+        tail_queued = 0
 
     # Get/print DRAM BWs if option enabled.
     dramChannelBW_Lists = [ ch.getIntervalBandwidths() for ch in DRAMChannels ] # list of lists

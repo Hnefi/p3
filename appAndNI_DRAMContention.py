@@ -12,6 +12,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["sweep_NI"])
     parser.add_argument("mem", help="Type of memory system (affects channel count and total BW)",choices=["DDR4","HBM"])
+    parser.add_argument("service_dist", help="Service time distribution that will be implemented by the RPC Generator",choices=["Fixed","Exponential","Bimodal","MICA"])
     parser.add_argument("--threads", type=int,help="Number of parallel threads to use. Default = 1",default = 1)
     parser.add_argument("--n", type=int,help="Number of rpcs to simulate. Default = 10",default = 10)
     parser.add_argument("--channels", type=int,help="Number of DRAM channels. Default = 4",default = 4)
@@ -43,6 +44,7 @@ def main():
         if 'HBM' in args.mem:
             invokerArgs = { 'numProcs': int(args.threads),
                             'mode': args.mode,
+                            'dist' : args.service_dist,
                             'runnableTarg': SimpyInterface,
                             'NumberOfChannels' : args.channels,
                             'NumberOfCores' : args.cores,
@@ -62,6 +64,7 @@ def main():
         else:
             invokerArgs = { 'numProcs': int(args.threads),
                             'mode': args.mode,
+                            'dist' : args.service_dist,
                             'runnableTarg': SimpyInterface,
                             'NumberOfChannels' : args.channels,
                             'NumberOfCores' : args.cores,
