@@ -16,8 +16,12 @@ def main():
     with open(args.ifile,'r') as rfh:
         csv_reader = csv.reader(rfh,delimiter=',')
         csv_writer = csv.writer(args.ofile,delimiter=',')
-        next(csv_reader)
+        firstRow = True
         for row in csv_reader:
+            if firstRow:
+                csv_writer.writerow(row)
+                firstRow = False
+                continue
             ni_bw = float(row[0])
             lambda_arrival = (ni_bw*1e9) / (8*args.rpcSizeBytes)
             mu_rate = 1/(float(args.serv_time)*1e-9)
