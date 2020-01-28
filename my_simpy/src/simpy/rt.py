@@ -9,7 +9,7 @@ except ImportError:
     # Python < 3.3
     from time import time, sleep
 
-from simpy.core import Environment, EmptySchedule, Infinity
+from .core import Environment, EmptySchedule, Infinity
 
 
 class RealtimeEnvironment(Environment):
