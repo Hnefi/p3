@@ -1,4 +1,4 @@
-from zipf_gen import ZipfGenerator
+from components.zipf_gen import ZipfKeyGenerator
 import argparse
 
 def main():
@@ -9,9 +9,9 @@ def main():
 
     # Make the zipf generator
     kwarg_dict = { "num_items" : args.N, "coeff" : args.s}
-    z = ZipfGenerator(**kwarg_dict)
-    print('The hottest 100 items have probs:')
-    print([z.prob_for_rank(i+1) for i in range(100)])
+    z = ZipfKeyGenerator(**kwarg_dict)
+    for i in range(10):
+        print('iter',i,'random key rank:',z.get_key())
 
 if __name__ == '__main__':
     main()
