@@ -8,11 +8,11 @@ from .requests import RPCRequest
 
 ## A class which serves as a Poisson load generator. Assumes lambda = 1.
 class PoissonLoadGen(object):
-    def __init__(self,simpy_env,out_queue,num_events,key_obj):
+    def __init__(self,simpy_env,out_queue,num_events,key_obj,incoming_load_A):
         self.env = simpy_env
         self.q = out_queue
         self.num_events = num_events
-        self.myLambda = 1.0
+        self.myLambda = 1/float(incoming_load_A)
         self.key_generator = key_obj
         self.action = self.env.process(self.run())
 
@@ -20,7 +20,7 @@ class PoissonLoadGen(object):
         numGenerated = 0
         while numGenerated < self.num_events:
             try:
-                req = RPCRequest()
+                req = RPCRequest(numGenerated)
                 # TODO: setup parameters like id, key, etc
                 yield self.q.put(req)
                 yield self.env.timeout(exp_arrival(self.myLambda))
@@ -35,7 +35,7 @@ class PoissonLoadGen(object):
         # Keep generating events for realistic measurement
         while True:
             try:
-                req = RPCRequest()
+                req = RPCRequest(-1)
                 # TODO: setup parameters like id, key, etc
                 yield self.q.put(req)
                 yield self.env.timeout(exp_arrival(self.myLambda))

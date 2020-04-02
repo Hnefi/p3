@@ -5,6 +5,8 @@
 from components.zipf_gen import ZipfKeyGenerator
 from components.load_balancer import LoadBalancerBase
 from components.load_generator import PoissonLoadGen
+from components.rpc_core import RPCCore
+from components.serv_times.exp_generator import ExpServTimeGenerator
 
 # simpy includes
 from my_simpy.src.simpy import Environment
@@ -32,10 +34,14 @@ def main():
     # Make the zipf generator
     kwarg_dict = { "num_items" : args.NumItems, "coeff" : args.ZipfCoeff }
     z = ZipfKeyGenerator(**kwarg_dict)
-    for i in range(10):
-        print('iter',i,'random key rank:',z.get_key())
+    print('Generating 20 random key ranks....')
+    for i in range(20):
+        print('key',i,'has rank:',z.get_key())
 
-    # Make the respective queues
+    # Make latency store from 1 to 100000, precision of 0.1%
+    latency_store = HdrHistogram(1, 100000, 3)
+
+    # Make the respective queues and cores
     if 'CRCW' in args.ConcurrencyPolicy: # single-queue
         disp_queues = [ Store(env) ]
     else: # both CREW and EREW are a form of multi-queueing
@@ -45,10 +51,27 @@ def main():
     event_queue = Store(env)
 
     # Make the load balancer and load generator
-    lgen = PoissonLoadGen(env,event_queue,args.RequestsToSimulate,z)
+    lgen = PoissonLoadGen(env,event_queue,args.RequestsToSimulate,z,args.Load)
     lb = LoadBalancerBase(env,lgen,event_queue,disp_queues)
 
+    # Hook up cores
+    if 'CRCW' in args.ConcurrencyPolicy: # single-queue
+        core_list = [ RPCCore(env,i,disp_queues[0],latency_store,ExpServTimeGenerator(1.0),lgen) for i in range(args.NumberOfWorkers) ] # All get a single queue
+    else:
+        core_list = [ RPCCore(env,i,disp_queues[i],latency_store,ExpServTimeGenerator(1.0),lgen) for i in range(args.NumberOfWorkers) ]  # Multi-queue
+
+    print('Running for',args.RequestsToSimulate,'requests......')
     env.run()
+
+    # Get results
+    def getServiceTimes(latStore):
+        percentiles = [ 50, 95, 99, 99.9 ]
+        vals = [ latStore.get_value_at_percentile(p) for p in percentiles ]
+        return zip(percentiles,vals)
+
+
+    zipped_results = getServiceTimes(latency_store)
+    print(*zipped_results)
 
 if __name__ == '__main__':
     main()

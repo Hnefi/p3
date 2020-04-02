@@ -4,6 +4,9 @@ from .end_measure import EndOfMeasurements
 from my_simpy.src.simpy import Environment,Interrupt
 from my_simpy.src.simpy.resources.store import Store
 
+# Python base package includes
+from random import randint
+
 ## A class which serves as a load balancer of incoming objects to a set of
 ## queues passed to it.
 ## Various queueing policies are implementable by extending the class
@@ -25,10 +28,20 @@ class LoadBalancerBase(object):
             print('Caught exception',e,'lets transparently ignore it')
         self.killed = True
 
+    def selectQueue(self):
+        # FIXME: for now, Random dispatch
+        the_q_idx = randint(0,len(self.worker_qs)-1)
+        return the_q_idx,self.worker_qs[the_q_idx]
+
     def run(self):
         while self.killed is False:
-            # Start new RPC
             req = yield self.in_q.get()
             if isinstance(req,EndOfMeasurements):
                 self.endSimGraceful()
                 continue
+            # Load-balance new RPC based on dispatch policy
+            req.dispatch_time = self.env.now
+
+            queue_num,the_queue = self.selectQueue()
+            yield the_queue.put(req)
+
