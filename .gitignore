@@ -12,3 +12,4 @@ interfaces/cacheConfigs/
 *venv/
 running_venv/
 tags
+.DS_Store
