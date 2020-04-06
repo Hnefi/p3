@@ -1,12 +1,15 @@
-#!/usr/bin/python3
+#!/usr/bin/env python
 ## Author: Mark Sutherland, (C) 2020
 from .serv_times.exp_generator import ExpServTimeGenerator
+
 class RPCCore(object):
-    def __init__(self,simpy_env,core_id,request_queue,measurement_store,stime_gen,lgen_to_interrupt):
+    def __init__(self,simpy_env,core_id,request_queue,measurement_store,rd_gen,wr_gen,lgen_to_interrupt):
         self.env = simpy_env
+        self.id = core_id
         self.in_q = request_queue
         self.latency_store = measurement_store
-        self.service_time_distribution = stime_gen
+        self.read_distribution_generator = rd_gen
+        self.write_distribution_generator = wr_gen
         self.killed = False
         self.action = self.env.process(self.run())
         self.numSimulated = 0
@@ -52,7 +55,10 @@ class RPCCore(object):
             rpc.start_proc_time = self.env.now
 
             # Model a service time
-            yield self.env.timeout(self.service_time_distribution.get())
+            if rpc.getWrite():
+                yield self.env.timeout(self.write_distribution_generator.get())
+            else:
+                yield self.env.timeout(self.read_distribution_generator.get())
 
             # RPC is done
             rpc.end_proc_time = self.env.now

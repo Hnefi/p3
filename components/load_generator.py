@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python
 ## Author: Mark Sutherland, (C) 2020
 from numpy.random import exponential as exp_arrival
 from my_simpy.src.simpy import Environment,Interrupt
@@ -9,7 +9,7 @@ from .requests import RPCRequest
 # Python base package includes
 from random import randint
 
-## A class which serves as a Poisson load generator. Assumes lambda = 1.
+## A class which serves as a Poisson load generator.
 class PoissonLoadGen(object):
     def __init__(self,simpy_env,out_queue,num_events,key_obj,incoming_load_A,writes):
         self.env = simpy_env
@@ -20,16 +20,19 @@ class PoissonLoadGen(object):
         self.write_frac = writes
         self.action = self.env.process(self.run())
 
+    def gen_new_req(self,rpc_id=-1):
+        # Setup parameters like id, key, etc
+        req = RPCRequest(rpc_id,self.key_generator.get_key())
+        write_integer = randint(0,100)
+        if write_integer <= self.write_frac:
+            req.setWrite()
+        return req
+
     def run(self):
         numGenerated = 0
         while numGenerated < self.num_events:
             try:
-                req = RPCRequest(numGenerated)
-                # TODO: setup parameters like id, key, etc
-                write_integer = randint(0,100)
-                if write_integer <= self.write_frac:
-                    req.setWrite()
-                yield self.q.put(req)
+                yield self.q.put(self.gen_new_req(numGenerated))
                 yield self.env.timeout(exp_arrival(self.myLambda))
                 numGenerated += 1
             except Interrupt as i:
@@ -42,9 +45,7 @@ class PoissonLoadGen(object):
         # Keep generating events for realistic measurement
         while True:
             try:
-                req = RPCRequest(-1)
-                # TODO: setup parameters like id, key, etc
-                yield self.q.put(req)
+                yield self.q.put(self.gen_new_req(-1))
                 yield self.env.timeout(exp_arrival(self.myLambda))
             except Interrupt as i:
                 print("LoadGenerator killed by feedback with Simpy text:",i)

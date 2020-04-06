@@ -7,10 +7,10 @@ from components.load_balancer import LoadBalancer
 from components.load_generator import PoissonLoadGen
 from components.rpc_core import RPCCore
 from components.serv_times.exp_generator import ExpServTimeGenerator
+from components.dispatch_policies import RandomDispatchPolicy, JSQDispatchPolicy, JBSQDispatchPolicy, CREWDispatchPolicy, EREWDispatchPolicy
 
 # simpy includes
 from my_simpy.src.simpy import Environment
-from my_simpy.src.simpy.resources.resource import FiniteQueueResource, Resource
 from my_simpy.src.simpy.resources.store import Store
 
 # python environment includes
@@ -22,9 +22,9 @@ def main():
     parser.add_argument("-N",'--NumItems', type=int,help="Number of items in the dataset. Default = 1M",default = 1000000)
     parser.add_argument("-s",'--ZipfCoeff',type=float,help="Skew (zipf) coefficient. Default = 0.95",default=0.95)
     parser.add_argument('-c','--NumberOfWorkers', dest='NumberOfWorkers', type=int, default=16,help='Number of worker cores in the queueing system. Default = 16')
-    parser.add_argument('-A','--Load',type=int,help='Load level for the system. For stability, A < c (number of workers). Default = 1',default=1)
+    parser.add_argument('-A','--Load',type=float,help='Load level for the system. For stability, A < c (number of workers). Default = 1',default=1.0)
     parser.add_argument('-cp','--ConcurrencyPolicy',required=True,choices=['EREW','CREW','CRCW'])
-    parser.add_argument('-f','--WriteFraction',type=int,help='Fraction of writes in the simulation. Default = 0.05 (5%)',default=.05)
+    parser.add_argument('-f','--WriteFraction',type=float,help='Fraction of writes in the simulation, expressed as percentage. Default = 5%',default=5.0)
     parser.add_argument('--RequestsToSimulate',type=int,help="Number of requests to simulate for. Default = 1M",default = 1000000)
     args = parser.parse_args()
 
@@ -44,21 +44,28 @@ def main():
     # Make the respective queues and cores
     if 'CRCW' in args.ConcurrencyPolicy: # single-queue
         disp_queues = [ Store(env) ]
+        disp_policy = JSQDispatchPolicy(disp_queues)
     else: # both CREW and EREW are a form of multi-queueing
         disp_queues = [ Store(env) for i in range(args.NumberOfWorkers) ]
+        if 'CREW' in args.ConcurrencyPolicy:
+            disp_policy = CREWDispatchPolicy(disp_queues)
+        else: # EREW
+            disp_policy = EREWDispatchPolicy(disp_queues)
 
-    # Queue to pass events from generator to balancer
-    event_queue = Store(env)
+    event_queue = Store(env) # to pass incoming load from generator to balancer
 
     # Make the load balancer and load generator
     lgen = PoissonLoadGen(env,event_queue,args.RequestsToSimulate,z,args.Load,args.WriteFraction)
-    lb = LoadBalancer(env,lgen,event_queue,disp_queues,args.ConcurrencyPolicy)
+    lb = LoadBalancer(env,lgen,event_queue,disp_queues,disp_policy)
+
+    rd_generator = ExpServTimeGenerator(1.0)
+    wr_generator = ExpServTimeGenerator(1.5)
 
     # Hook up cores
     if 'CRCW' in args.ConcurrencyPolicy: # single-queue
-        core_list = [ RPCCore(env,i,disp_queues[0],latency_store,ExpServTimeGenerator(1.0),lgen) for i in range(args.NumberOfWorkers) ] # All get a single queue
+        core_list = [ RPCCore(env,i,disp_queues[0],latency_store,rd_generator,wr_generator,lgen) for i in range(args.NumberOfWorkers) ] # All get a single queue
     else: # private core queues
-        core_list = [ RPCCore(env,i,disp_queues[i],latency_store,ExpServTimeGenerator(1.0),lgen) for i in range(args.NumberOfWorkers) ]  # Multi-queue
+        core_list = [ RPCCore(env,i,disp_queues[i],latency_store,rd_generator,wr_generator,lgen) for i in range(args.NumberOfWorkers) ]  # Multi-queue
 
     print('Running for',args.RequestsToSimulate,'requests......')
     env.run()
