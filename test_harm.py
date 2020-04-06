@@ -3,7 +3,7 @@
 
 # my includes
 from components.zipf_gen import ZipfKeyGenerator
-from components.load_balancer import LoadBalancerBase
+from components.load_balancer import LoadBalancer
 from components.load_generator import PoissonLoadGen
 from components.rpc_core import RPCCore
 from components.serv_times.exp_generator import ExpServTimeGenerator
@@ -34,7 +34,7 @@ def main():
     # Make the zipf generator
     kwarg_dict = { "num_items" : args.NumItems, "coeff" : args.ZipfCoeff }
     z = ZipfKeyGenerator(**kwarg_dict)
-    print('Generating 20 random key ranks....')
+    print('Displaying 20 skewed key ranks....')
     for i in range(20):
         print('key',i,'has rank:',z.get_key())
 
@@ -51,13 +51,13 @@ def main():
     event_queue = Store(env)
 
     # Make the load balancer and load generator
-    lgen = PoissonLoadGen(env,event_queue,args.RequestsToSimulate,z,args.Load)
-    lb = LoadBalancerBase(env,lgen,event_queue,disp_queues)
+    lgen = PoissonLoadGen(env,event_queue,args.RequestsToSimulate,z,args.Load,args.WriteFraction)
+    lb = LoadBalancer(env,lgen,event_queue,disp_queues,args.ConcurrencyPolicy)
 
     # Hook up cores
     if 'CRCW' in args.ConcurrencyPolicy: # single-queue
         core_list = [ RPCCore(env,i,disp_queues[0],latency_store,ExpServTimeGenerator(1.0),lgen) for i in range(args.NumberOfWorkers) ] # All get a single queue
-    else:
+    else: # private core queues
         core_list = [ RPCCore(env,i,disp_queues[i],latency_store,ExpServTimeGenerator(1.0),lgen) for i in range(args.NumberOfWorkers) ]  # Multi-queue
 
     print('Running for',args.RequestsToSimulate,'requests......')

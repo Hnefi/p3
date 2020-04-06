@@ -10,13 +10,14 @@ from random import randint
 ## A class which serves as a load balancer of incoming objects to a set of
 ## queues passed to it.
 ## Various queueing policies are implementable by extending the class
-class LoadBalancerBase(object):
-    def __init__(self,simpy_env,lgen_to_interrupt,in_queue,disp_queues):
+class LoadBalancer(object):
+    def __init__(self,simpy_env,lgen_to_interrupt,in_queue,disp_queues,cp):
         self.env = simpy_env
         self.in_q = in_queue
         self.worker_qs = disp_queues
         self.lgen_to_interrupt = lgen_to_interrupt
         self.killed = False
+        self.concurrency = cp
         self.action = self.env.process(self.run())
 
     def endSimGraceful(self):
@@ -28,7 +29,7 @@ class LoadBalancerBase(object):
             print('Caught exception',e,'lets transparently ignore it')
         self.killed = True
 
-    def selectQueue(self):
+    def selectQueue(self,reqIsWrite):
         # FIXME: for now, Random dispatch
         the_q_idx = randint(0,len(self.worker_qs)-1)
         return the_q_idx,self.worker_qs[the_q_idx]
@@ -42,6 +43,6 @@ class LoadBalancerBase(object):
             # Load-balance new RPC based on dispatch policy
             req.dispatch_time = self.env.now
 
-            queue_num,the_queue = self.selectQueue()
+            queue_num,the_queue = self.selectQueue(req.getWrite())
             yield the_queue.put(req)
 
