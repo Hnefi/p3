@@ -9,6 +9,10 @@ interfaces/cacheConfigs/
 *.csv
 *.txt
 *.csv.bak
-*venv/
-running_venv/
 tags
+.DS_Store
+
+# Virtual environments
+venv/
+running_venv/
+dev_env/

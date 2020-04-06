@@ -11,8 +11,8 @@ matching a given criterion.
 from heapq import heappush, heappop
 from collections import namedtuple
 
-from simpy.core import BoundClass
-from simpy.resources import base
+from ..core import BoundClass
+from ..resources import base
 
 
 class StorePut(base.Put):
