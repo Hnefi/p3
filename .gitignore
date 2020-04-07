@@ -2,6 +2,7 @@
 *.o
 obj_opt/
 *.cfg
+*.pyc
 __pycache__/
 mcpat/
 interfaces/cacheResults/
