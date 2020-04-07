@@ -22,9 +22,9 @@ def main():
     parser.add_argument("-N",'--NumItems', type=int,help="Number of items in the dataset. Default = 1M",default = 1000000)
     parser.add_argument("-s",'--ZipfCoeff',type=float,help="Skew (zipf) coefficient. Default = 0.95",default=0.95)
     parser.add_argument('-c','--NumberOfWorkers', dest='NumberOfWorkers', type=int, default=16,help='Number of worker cores in the queueing system. Default = 16')
-    parser.add_argument('-A','--Load',type=float,help='Load level for the system. For stability, A < c (number of workers). Default = 1',default=1.0)
-    parser.add_argument('-cp','--ConcurrencyPolicy',required=True,choices=['EREW','CREW','CRCW'])
-    parser.add_argument('-f','--WriteFraction',type=float,help='Fraction of writes in the simulation, expressed as percentage. Default = 5%',default=5.0)
+    parser.add_argument('-A','--Load',type=float,help="Load level for the system. For stability, A < c (number of workers). Default = 1",default=1.0)
+    parser.add_argument('-cp','--ConcurrencyPolicy',required=True,choices=['EREW','CREW','CRCW'],help="Concurrency dispatch poliy")
+    parser.add_argument('-f','--WriteFraction',type=float,help="Fraction of writes in the simulation, expressed as percentage. Default = 5",default=5.0)
     parser.add_argument('--RequestsToSimulate',type=int,help="Number of requests to simulate for. Default = 1M",default = 1000000)
     args = parser.parse_args()
 
@@ -38,8 +38,8 @@ def main():
     for i in range(20):
         print('key',i,'has rank:',z.get_key())
 
-    # Make latency store from 1 to 100000, precision of 0.1%
-    latency_store = HdrHistogram(1, 100000, 3)
+    # Make latency store from 1 to 1000, precision of 0.01%
+    latency_store = HdrHistogram(1, 1000, 4)
 
     # Make the respective queues and cores
     if 'CRCW' in args.ConcurrencyPolicy: # single-queue

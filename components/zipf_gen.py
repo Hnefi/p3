@@ -48,7 +48,7 @@ class ZipfKeyGenerator(object):
         print('Done!')
 
     def prob_for_rank(self,k):
-        return self.pdf_array[k-1]
+        return self.pdf_array[k]
         #s = float(self.theConfig['s'])
         #return ( (float(1.0)/pow(k,s)) / (self.harmonic) )
 
