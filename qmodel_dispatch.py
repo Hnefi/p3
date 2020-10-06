@@ -3,6 +3,7 @@
 
 # my includes
 from components.zipf_gen import ZipfKeyGenerator
+from components.uni_gen import UniformKeyGenerator
 from components.load_balancer import LoadBalancer
 from components.load_generator import PoissonLoadGen
 from components.rpc_core import RPCCore
@@ -20,7 +21,7 @@ from hdrh.histogram import HdrHistogram
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-N",'--NumItems', type=int,help="Number of items in the dataset. Default = 1M",default = 1000000)
-    parser.add_argument("-s",'--ZipfCoeff',type=float,help="Skew (zipf) coefficient. Default = 0.95",default=0.95)
+    parser.add_argument("-s",'--ZipfCoeff',type=float,help="Skew (zipf) coefficient. If set to 0, uniform distribution. Default = 0.95",default=0.95)
     parser.add_argument('-c','--NumberOfWorkers', dest='NumberOfWorkers', type=int, default=16,help='Number of worker cores in the queueing system. Default = 16')
     parser.add_argument('-A','--Load',type=float,help="Load level for the system. For stability, A < c (number of workers). Default = 1",default=1.0)
     parser.add_argument('-cp','--ConcurrencyPolicy',required=True,choices=['EREW','CREW','CRCW'],help="Concurrency dispatch poliy")
@@ -33,10 +34,15 @@ def main():
 
     # Make the zipf generator
     kwarg_dict = { "num_items" : args.NumItems, "coeff" : args.ZipfCoeff }
-    z = ZipfKeyGenerator(**kwarg_dict)
-    print('Displaying 20 skewed key ranks....')
-    for i in range(20):
-        print('key',i,'has rank:',z.get_key())
+    if args.ZipfCoeff == 0:
+        z = UniformKeyGenerator(**kwarg_dict)
+        print('Using uniform key ranks....')
+    else:
+        z = ZipfKeyGenerator(**kwarg_dict)
+        print('Using skewed key ranks.... Displaying 20 examples.')
+        for i in range(20):
+            print('key',i,'has rank:',z.get_key())
+
 
     # Make latency store from 1 to 1000, precision of 0.01%
     latency_store = HdrHistogram(1, 1000, 4)
@@ -75,7 +81,6 @@ def main():
         percentiles = [ 50, 95, 99, 99.9 ]
         vals = [ latStore.get_value_at_percentile(p) for p in percentiles ]
         return zip(percentiles,vals)
-
 
     zipped_results = getServiceTimes(latency_store)
     print(*zipped_results)
