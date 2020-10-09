@@ -18,7 +18,7 @@ class RPCCore(object):
         self.lgen_to_interrupt = lgen_to_interrupt
         self.kill_sim_threshold = 10000
         self.lastFiveSTimes = [ ]
-        if core_id is 0:
+        if core_id == 0:
             self.isMaster = True
         else:
             self.isMaster = False
