@@ -1,7 +1,8 @@
 from multiprocessing import Process, Queue
 from queue import Empty
-from .tlat_sim import simulate
-from .core_dram_contention import simulateAppAndNI_DRAM
+#from .core_dram_contention import simulateAppAndNI_DRAM
+
+import importlib
 
 def conv_to_string(k,v):
     return "--" + str(k) + " " + str(v)
@@ -15,7 +16,7 @@ def build_arg_string(d):
     return ret
 
 class SimpyInterface(Process):
-    def __init__(self,simpy_arguments,q,num_jobs):
+    def __init__(self,simpy_arguments,q,num_jobs,rtarg):
         super().__init__()
         self.kwargs = dict(simpy_arguments)
         self.workQ = q
@@ -23,6 +24,7 @@ class SimpyInterface(Process):
         self.mode = self.kwargs['mode']
         del self.kwargs['mode']
         self.simpy_argstring = build_arg_string(self.kwargs)
+        self.exp_to_run = rtarg
 
     def run(self):
         jobs = [ ]
@@ -34,6 +36,10 @@ class SimpyInterface(Process):
                 return
 
         # should always get here
+
+        # Import the module which is passed from parallel
+        module_to_run = importlib.import_module('exps.' + self.exp_to_run)
+
         #print("Thread", self.name, "starting work.")
         while len(jobs) > 0:
             strToPass = self.simpy_argstring
@@ -42,15 +48,17 @@ class SimpyInterface(Process):
                 addMe = '-k ' + str(job_id)
                 strToPass += addMe
             else:
-                # job_id is a bandwidth
-                BytesPerPacket = 64
-                PacketInterarrival = 1/(float(job_id)/BytesPerPacket/8.0)
-                addMe = '--LambdaArrivalRate ' + str(PacketInterarrival)
+                addMe = '-A ' + str(job_id)
                 strToPass += addMe
-                addMe = ' --Bandwidth ' + str(job_id)
-                strToPass += addMe
+                # TODO: Legacy job_id is a bandwidth
+                #BytesPerPacket = 64
+                #PacketInterarrival = 1/(float(job_id)/BytesPerPacket/8.0)
+                #addMe = '--LambdaArrivalRate ' + str(PacketInterarrival)
+                #strToPass += addMe
+                #addMe = ' --Bandwidth ' + str(job_id)
+                #strToPass += addMe
 
             # Run it.
-            output = simulateAppAndNI_DRAM(strToPass)
+            output = module_to_run.run_exp(strToPass)
             self.workQ.put( {job_id : output}, False ) # nowait
         #print("Thread", self.name, "done all jobs.")

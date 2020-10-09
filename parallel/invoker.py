@@ -1,6 +1,8 @@
 from multiprocessing import Process, Queue
 from math import floor
 
+from interfaces.simpy_interface import SimpyInterface
+
 class Invoker(object):
     def __init__(self,**kwargs):
         if "numProcs" not in kwargs.keys():
@@ -45,7 +47,7 @@ class Invoker(object):
                 self.queues[curProc].put(job,False) #dont block
                 self.jobs_assigned[curProc] += 1
 
-        self.processes = [ self.runTarg( kwargs,self.queues[count],self.jobs_assigned[count] ) for count in range(self.numProcs) ]
+        self.processes = [ SimpyInterface( kwargs,self.queues[count],self.jobs_assigned[count],self.runTarg ) for count in range(self.numProcs) ]
 
     def getResultsFromQueue(self,index):
         resultCount = 0
