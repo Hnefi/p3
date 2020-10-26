@@ -5,11 +5,12 @@ from numpy import linspace
 from parallel import Invoker
 
 def main():
-    invokerArgs = {'ConcurrencyPolicy' : 'CRCW',
-            'runnableTarg' : 'qmodel_dispatch',
-            'argrange' : linspace(1,5,1),
+    invokerArgs = {'runnableTarg' : 'qmodel_dispatch',
+            'FunctionGrouping': 4,
+            'NumFunctions' : 16,
+            'argrange' : linspace(100,1000,10),
             'mode' : 'sweep_A',
-            'numProcs': 1}
+            'numProcs': 2}
     threadController = Invoker( **invokerArgs )
 
     print('starting....')

@@ -48,7 +48,7 @@ class SimpyInterface(Process):
                 addMe = '-k ' + str(job_id)
                 strToPass += addMe
             else:
-                addMe = '-A ' + str(job_id)
+                addMe = '-a ' + str(job_id)
                 strToPass += addMe
                 # TODO: Legacy job_id is a bandwidth
                 #BytesPerPacket = 64

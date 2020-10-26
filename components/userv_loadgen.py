@@ -4,33 +4,26 @@ from numpy.random import exponential as exp_arrival
 from my_simpy.src.simpy import Environment,Interrupt
 from my_simpy.src.simpy.resources.store import Store
 from .end_measure import EndOfMeasurements
-from .requests import RPCRequest
+from .requests import FuncRequest
+from .load_generator import AbstractLoadGen
 
-# Python base package includes
 from random import randint
 
-class AbstractLoadGen(object):
-    def __init__(self):
-        pass
-
-## A class which serves as a Poisson load generator.
-class PoissonLoadGen(AbstractLoadGen):
-    def __init__(self,simpy_env,out_queue,num_events,key_obj,incoming_load_A,writes):
+## A class which serves as a load generator for a microservice-simulation with multiple req types.
+class uServLoadGen(AbstractLoadGen):
+    def __init__(self,simpy_env,out_queue,num_events,interarrival_time,num_functions):
         super().__init__()
         self.env = simpy_env
         self.q = out_queue
         self.num_events = num_events
-        self.myLambda = 1/float(incoming_load_A)
-        self.key_generator = key_obj
-        self.write_frac = writes
+        self.myLambda = interarrival_time
+        self.num_functions = num_functions
         self.action = self.env.process(self.run())
 
     def gen_new_req(self,rpc_id=-1):
-        # Setup parameters like id, key, etc
-        req = RPCRequest(rpc_id,self.key_generator.get_key())
-        write_integer = randint(0,100)
-        if write_integer <= self.write_frac:
-            req.setWrite()
+        # Setup parameters id and func_type
+        f_type = randint(0,self.num_functions-1)
+        req = FuncRequest(rpc_id,f_type)
         return req
 
     def run(self):

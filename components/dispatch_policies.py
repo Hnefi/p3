@@ -63,3 +63,14 @@ class EREWDispatchPolicy(object):
         # Map key to partition/queue.
         # Important not just to take mod of integer key, would result in all hot keys grouping up
         return hash(req.key) % len(self.queues)
+
+class FunctionDispatch(object):
+    def __init__(self,qs,func_grouping):
+        self.queues = qs
+        self.func_grouping = func_grouping
+
+    def select(self,req):
+        # Map function idx to q
+        q_idx = int(req.getFuncType() / self.func_grouping)
+        return q_idx
+

@@ -2,13 +2,11 @@
 ## Author: Mark Sutherland, (C) 2020
 
 # my includes
-from components.zipf_gen import ZipfKeyGenerator
-from components.uni_gen import UniformKeyGenerator
 from components.load_balancer import LoadBalancer
-from components.load_generator import PoissonLoadGen
-from components.rpc_core import RPCCore
-from components.serv_times.exp_generator import ExpServTimeGenerator
-from components.dispatch_policies import RandomDispatchPolicy, JSQDispatchPolicy, JBSQDispatchPolicy, CREWDispatchPolicy, EREWDispatchPolicy
+from components.userv_loadgen  import uServLoadGen
+from components.rpc_core import uServCore
+from components.serv_times.userv_function import uServiceFunctionTime
+from components.dispatch_policies import JBSQDispatchPolicy, FunctionDispatch
 
 # simpy includes
 from my_simpy.src.simpy import Environment
@@ -19,61 +17,63 @@ import argparse
 from hdrh.histogram import HdrHistogram
 
 def run_exp(arg_string):
-    parser = argparse.ArgumentParser(description='Basic dispatch simulation to compare dispatch methods')
-    parser.add_argument("-N",'--NumItems', type=int,help="Number of items in the dataset. Default = 1M",default = 1000000)
-    parser.add_argument("-s",'--ZipfCoeff',type=float,help="Skew (zipf) coefficient. If set to 0, uniform distribution. Default = 0.95",default=0.95)
+    parser = argparse.ArgumentParser(description='Basic simulation to compare affinity-based dispatch sizing.')
     parser.add_argument('-c','--NumberOfWorkers', dest='NumberOfWorkers', type=int, default=16,help='Number of worker cores in the queueing system. Default = 16')
-    parser.add_argument('-A','--Load',type=float,help="Load level for the system. For stability, A < c (number of workers). Default = 1",default=1.0)
-    parser.add_argument('-cp','--ConcurrencyPolicy',required=True,choices=['EREW','CREW','CRCW'],help="Concurrency dispatch policy")
-    parser.add_argument('-f','--WriteFraction',type=float,help="Fraction of writes in the simulation, expressed as percentage. Default = 5",default=5.0)
-    parser.add_argument('--RequestsToSimulate',type=int,help="Number of requests to simulate for. Default = 1M",default = 1000)
+    parser.add_argument('-a','--ArrivalRate',type=float,help="RPC inter-arrival time for the load gen (ns). Default = 1000",default=1000.0)
+    parser.add_argument('--RequestsToSimulate',type=int,help="Number of requests to simulate for. Default = 1K",default = 1000)
+    parser.add_argument('-G','--FunctionGrouping',type=int,help="Number of functions to assign to a core. Default = number of cores",default=0)
+    parser.add_argument('-N','--NumFunctions',type=int,help="Number of functions total. Default = 8",default=8)
+    parser.add_argument('-T','--FixedTime',type=int,help="Fixed service time which cores always consume (ns). Default = 1000",default=1000)
+    parser.add_argument('-W','--WorkingSet',type=int,help="Working set size of a function (KB). Default = 32",default=32*1024)
+    parser.add_argument('-S','--CacheSize',type=int,help="Size of an L1 cache. Default = 32",default=32*1024)
     args = parser.parse_args(arg_string.split(' '))
+
+    # Set this to number of workers or explicitly specified values
+    if args.FunctionGrouping == 0:
+        FuncGrouping = args.NumberOfWorkers
+    else:
+        FuncGrouping = args.FunctionGrouping
 
     # Create the simpy environment needed by all components beneath it
     env = Environment()
 
-    # Make the zipf generator
-    kwarg_dict = { "num_items" : args.NumItems, "coeff" : args.ZipfCoeff }
-    if args.ZipfCoeff == 0:
-        z = UniformKeyGenerator(**kwarg_dict)
-        #print('Using uniform key ranks....')
-    else:
-        z = ZipfKeyGenerator(**kwarg_dict)
-        #print('Using skewed key ranks.... Displaying 20 examples.')
-        #for i in range(20):
-            #print('key',i,'has rank:',z.get_key())
-
-
-    # Make latency store from 1 to 1000, precision of 0.01%
-    latency_store = HdrHistogram(1, 1000, 4)
-
-    # Make the respective queues and cores
-    if 'CRCW' in args.ConcurrencyPolicy: # single-queue
-        disp_queues = [ Store(env) ]
-        disp_policy = JSQDispatchPolicy(disp_queues)
-    else: # both CREW and EREW are a form of multi-queueing
-        disp_queues = [ Store(env) for i in range(args.NumberOfWorkers) ]
-        if 'CREW' in args.ConcurrencyPolicy:
-            disp_policy = CREWDispatchPolicy(disp_queues)
-        else: # EREW
-            disp_policy = EREWDispatchPolicy(disp_queues)
+    # Make latency store from 100ns to 100000ns, precision of 0.01%
+    latency_store = HdrHistogram(100,100000,4)
 
     event_queue = Store(env) # to pass incoming load from generator to balancer
 
+    # Make number of dispatch queues based on function grouping
+    if (args.NumFunctions % FuncGrouping) != 0:
+        print('ERROR: Cannot evenly divide Num Functions',args.NumFunctions,'into groups of',FuncGrouping,'dying....')
+        return {}
+
+    numQueues = int(args.NumFunctions / FuncGrouping)
+    func_queues = [ Store(env) for idx in range(numQueues) ]
+    # Create dispatch policy based on function ID
+    func_policy = FunctionDispatch(func_queues,FuncGrouping)
+
     # Make the load balancer and load generator
-    lgen = PoissonLoadGen(env,event_queue,args.RequestsToSimulate,z,args.Load,args.WriteFraction)
-    lb = LoadBalancer(env,lgen,event_queue,disp_queues,disp_policy)
+    lgen = uServLoadGen(env,event_queue,args.RequestsToSimulate,args.ArrivalRate,args.NumFunctions)
 
-    rd_generator = ExpServTimeGenerator(1.0)
-    wr_generator = ExpServTimeGenerator(1.5)
+    # Load balancer for taking requests from the event queue, put into the func queues
+    lb = LoadBalancer(env,lgen,event_queue,func_queues,func_policy)
 
-    # Hook up cores
-    if 'CRCW' in args.ConcurrencyPolicy: # single-queue
-        core_list = [ RPCCore(env,i,disp_queues[0],latency_store,rd_generator,wr_generator,lgen) for i in range(args.NumberOfWorkers) ] # All get a single queue
-    else: # private core queues
-        core_list = [ RPCCore(env,i,disp_queues[i],latency_store,rd_generator,wr_generator,lgen) for i in range(args.NumberOfWorkers) ]  # Multi-queue
+    # Make the function service time generator. Parameters:
+    # - fixed serv time
+    # - working set for a function
+    # - lookahead to assume (for now 0)
+    # - L1 cache size
+    # - number of functions assigned to a core
+    fmu_gen = uServiceFunctionTime(args.FixedTime,args.WorkingSet,0,args.CacheSize,FuncGrouping)
 
-    #print('Running for',args.RequestsToSimulate,'requests......')
+    totalcs = 0
+    # For each function group, create a logical input queue of RPCs and hook it up to the cores which serve it
+    for i in range(numQueues):
+        core_list = [ uServCore(env,j,func_queues[j],latency_store,fmu_gen,lgen) for j in range(FuncGrouping) ]
+        totalcs += len(core_list)
+
+    assert(totalcs == args.NumberOfWorkers)
+
     env.run()
 
     # Get results
