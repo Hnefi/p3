@@ -19,15 +19,15 @@ import argparse
 from hdrh.histogram import HdrHistogram
 
 def run_exp(arg_string):
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description='Basic dispatch simulation to compare dispatch methods')
     parser.add_argument("-N",'--NumItems', type=int,help="Number of items in the dataset. Default = 1M",default = 1000000)
     parser.add_argument("-s",'--ZipfCoeff',type=float,help="Skew (zipf) coefficient. If set to 0, uniform distribution. Default = 0.95",default=0.95)
     parser.add_argument('-c','--NumberOfWorkers', dest='NumberOfWorkers', type=int, default=16,help='Number of worker cores in the queueing system. Default = 16')
     parser.add_argument('-A','--Load',type=float,help="Load level for the system. For stability, A < c (number of workers). Default = 1",default=1.0)
     parser.add_argument('-cp','--ConcurrencyPolicy',required=True,choices=['EREW','CREW','CRCW'],help="Concurrency dispatch policy")
     parser.add_argument('-f','--WriteFraction',type=float,help="Fraction of writes in the simulation, expressed as percentage. Default = 5",default=5.0)
-    parser.add_argument('--RequestsToSimulate',type=int,help="Number of requests to simulate for. Default = 1M",default = 1000000)
-    args = parser.parse_args()
+    parser.add_argument('--RequestsToSimulate',type=int,help="Number of requests to simulate for. Default = 1M",default = 1000)
+    args = parser.parse_args(arg_string.split(' '))
 
     # Create the simpy environment needed by all components beneath it
     env = Environment()

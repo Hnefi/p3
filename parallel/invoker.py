@@ -16,6 +16,7 @@ class Invoker(object):
         del kwargs['runnableTarg']
         del kwargs['numProcs']
 
+        '''
         if 'numservs' in kwargs['mode']:
             argrange = kwargs['coreRange']
             del kwargs['coreRange']
@@ -25,6 +26,8 @@ class Invoker(object):
         elif 'NI' in kwargs['mode']:
             argrange = kwargs['BWRange']
             del kwargs['BWRange']
+        '''
+        argrange = kwargs['argrange']
 
         self.queues = [ Queue() for count in range(self.numProcs) ]
 
@@ -47,6 +50,7 @@ class Invoker(object):
                 self.queues[curProc].put(job,False) #dont block
                 self.jobs_assigned[curProc] += 1
 
+        del kwargs['argrange']
         self.processes = [ SimpyInterface( kwargs,self.queues[count],self.jobs_assigned[count],self.runTarg ) for count in range(self.numProcs) ]
 
     def getResultsFromQueue(self,index):
