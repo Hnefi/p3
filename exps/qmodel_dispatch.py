@@ -81,10 +81,8 @@ def run_exp(arg_string):
     env.run()
 
     # Get results
-    def getServiceTimes(latStore):
-        percentiles = [ 50, 95, 99, 99.9 ]
-        vals = [ latStore.get_value_at_percentile(p) for p in percentiles ]
-        return zip(percentiles,vals)
-
-    zipped_results = getServiceTimes(latency_store)
-    return zipped_results
+    rd = {}
+    percentiles = [ 50, 95, 99, 99.9 ]
+    for p in percentiles:
+        rd[p] = float(latency_store.get_value_at_percentile(p)) / 1000 # return in us
+    return rd
