@@ -22,5 +22,8 @@ class uServiceFunctionTime(object):
         prob_miss = 1-min(1,self.S_cache/(self.W * self.Nf))
         num_trials = (float(self.W)/self.InstWidth) / self.InstPacking / (self.L + 1)
         exp_num_misses = prob_miss * num_trials
+        inst_stalls_cycles = (self.LLCLat * exp_num_misses)
 
-        return fix + (self.LLCLat * exp_num_misses)
+        stime = fix + inst_stalls_cycles
+        #print('Service time is',stime,'broken into fix =',fix,'and inst_stalls_cycles =',inst_stalls_cycles)
+        return stime

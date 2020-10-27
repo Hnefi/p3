@@ -18,19 +18,21 @@ from hdrh.histogram import HdrHistogram
 
 def run_exp(arg_string):
     parser = argparse.ArgumentParser(description='Basic simulation to compare affinity-based dispatch sizing.')
-    parser.add_argument('-c','--NumberOfWorkers', dest='NumberOfWorkers', type=int, default=16,help='Number of worker cores in the queueing system. Default = 16')
+    parser.add_argument('-c','--NumWorkers', dest='NumWorkers', type=int, default=16,help='Number of worker cores in the queueing system. Default = 16')
     parser.add_argument('-a','--ArrivalRate',type=float,help="RPC inter-arrival time for the load gen (ns). Default = 1000",default=1000.0)
     parser.add_argument('--RequestsToSimulate',type=int,help="Number of requests to simulate for. Default = 1K",default = 1000)
     parser.add_argument('-G','--FunctionGrouping',type=int,help="Number of functions to assign to a core. Default = number of cores",default=0)
+    parser.add_argument('-J','--CoreGrouping',type=int,help="Number of cores to assign to each function group. Default = 1",default=1)
     parser.add_argument('-N','--NumFunctions',type=int,help="Number of functions total. Default = 8",default=8)
     parser.add_argument('-T','--FixedTime',type=int,help="Fixed service time which cores always consume (ns). Default = 1000",default=1000)
     parser.add_argument('-W','--WorkingSet',type=int,help="Working set size of a function (KB). Default = 32",default=32*1024)
     parser.add_argument('-S','--CacheSize',type=int,help="Size of an L1 cache. Default = 32",default=32*1024)
+    parser.add_argument('-L','--CoreLookahead',type=int,help="Cache block lookahead that the CPU can attain. Default = 1",default=1)
     args = parser.parse_args(arg_string.split(' '))
 
     # Set this to number of workers or explicitly specified values
     if args.FunctionGrouping == 0:
-        FuncGrouping = args.NumberOfWorkers
+        FuncGrouping = args.NumWorkers
     else:
         FuncGrouping = args.FunctionGrouping
 
@@ -61,18 +63,20 @@ def run_exp(arg_string):
     # Make the function service time generator. Parameters:
     # - fixed serv time
     # - working set for a function
-    # - lookahead to assume (for now 0)
+    # - lookahead to assume
     # - L1 cache size
     # - number of functions assigned to a core
-    fmu_gen = uServiceFunctionTime(args.FixedTime,args.WorkingSet,0,args.CacheSize,FuncGrouping)
+    fmu_gen = uServiceFunctionTime(args.FixedTime,args.WorkingSet,args.CoreLookahead,args.CacheSize,FuncGrouping)
 
     totalcs = 0
-    # For each function group, create a logical input queue of RPCs and hook it up to the cores which serve it
+    # For each function group, assign the specified number of cores to it
     for i in range(numQueues):
-        core_list = [ uServCore(env,j,func_queues[j],latency_store,fmu_gen,lgen) for j in range(FuncGrouping) ]
+        core_list = [ uServCore(env,j,func_queues[i],latency_store,fmu_gen,lgen) for j in range(args.CoreGrouping) ]
         totalcs += len(core_list)
 
-    assert(totalcs == args.NumberOfWorkers)
+    assert(totalcs == args.NumWorkers)
+    #print('Running queueing study... Input queues:',numQueues,'Num cores per q:',
+            #args.CoreGrouping,'Num functions per core:',FuncGrouping)
 
     env.run()
 
@@ -83,4 +87,4 @@ def run_exp(arg_string):
         return zip(percentiles,vals)
 
     zipped_results = getServiceTimes(latency_store)
-    print(*zipped_results)
+    return zipped_results
