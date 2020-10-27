@@ -20,7 +20,7 @@ class uServiceFunctionTime(object):
 
         # Number of expected misses
         prob_miss = 1-min(1,self.S_cache/(self.W * self.Nf))
-        num_trials = (float(self.W)/self.InstWidth) / self.InstPacking / (self.L + 1)
+        num_trials = (self.T * 2) / self.InstPacking / (self.L + 1)
         exp_num_misses = prob_miss * num_trials
         inst_stalls_cycles = (self.LLCLat * exp_num_misses)
 
