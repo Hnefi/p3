@@ -12,8 +12,11 @@ interfaces/cacheConfigs/
 *.csv.bak
 tags
 .DS_Store
+.ipynb_checkpoints/
+*.pdf
 
 # Virtual environments
 venv/
 running_venv/
 dev_env/
+cluster/
