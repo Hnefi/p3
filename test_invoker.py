@@ -6,7 +6,7 @@ from parallel import Invoker
 
 def main():
     invokerArgs = {'runnableTarg' : 'qmodel_dispatch',
-            'RequestsToSimulate' : 100000,
+            #'RequestsToSimulate' : 100000,
             'FunctionGrouping': 4,
             'NumWorkers' : 16,
             'CoreGrouping' : 4,
