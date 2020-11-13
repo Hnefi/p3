@@ -14,6 +14,7 @@ tags
 .DS_Store
 .ipynb_checkpoints/
 *.pdf
+*.pdf.bak
 
 # Virtual environments
 venv/

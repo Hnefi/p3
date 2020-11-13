@@ -34,7 +34,6 @@ class uServLoadGen(AbstractLoadGen):
                 yield self.env.timeout(exp_arrival(self.myLambda))
                 numGenerated += 1
             except Interrupt as i:
-                print("LoadGenerator killed during event generation. Interrupt:",i,"die....")
                 return
 
         # Make a new EndOfMeasurements event (special)
@@ -46,5 +45,4 @@ class uServLoadGen(AbstractLoadGen):
                 yield self.q.put(self.gen_new_req(-1))
                 yield self.env.timeout(exp_arrival(self.myLambda))
             except Interrupt as i:
-                print("LoadGenerator killed by feedback with Simpy text:",i)
                 return

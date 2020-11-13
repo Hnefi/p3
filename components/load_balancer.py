@@ -28,8 +28,6 @@ class LoadBalancer(object):
     def endSimGraceful(self):
         try:
             self.lgen_to_interrupt.action.interrupt("end of sim")
-            if len(self.in_q.items) != 0:
-                print("WARNING: Balancer got EoM packet from Load Generator, but there are still",len(self.in_q.items),"Reqs in the queue. Recommend check results.")
         except RuntimeError as e:
             print('Caught exception',e,'lets transparently ignore it')
         self.killed = True
