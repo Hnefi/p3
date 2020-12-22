@@ -2,7 +2,7 @@
 ## Author: Mark Sutherland, (C) 2020
 
 from numpy.random import exponential
-from math import ceil
+from math import ceil,floor
 
 from abc import ABC,abstractmethod
 
@@ -38,11 +38,16 @@ class StaticUServiceTime(uServiceFunctionTimeABC):
 
         if self.Nf > self.func_thrashing_boundary:
             num_bbs = ceil(float(num_insts_private) / self.bb_size)
-            #num_bbs = num_insts_private / self.bb_size
-            cycles_private = num_bbs * (self.bb_size+self.LLCLat)/self.bb_size
+            spatial_locality = floor((self.InstPacking - self.bb_size)/self.bb_size)
+            num_bb_misses = floor(num_bbs / (1+spatial_locality))
+            num_bb_hits = num_bbs - num_bb_misses
+            bb_miss_cycles = num_bb_misses * (self.bb_size+self.LLCLat)/self.bb_size * self.max_cpi
+            bb_hit_cycles = num_bb_hits * self.bb_size * self.max_cpi
+            cycles_private = bb_hit_cycles + bb_miss_cycles
+
             cycles_lib = num_insts_lib * self.max_cpi
             stime = (cycles_private + cycles_lib)/2
-            #print('Service time is',stime,'broken into private=',cycles_private,'and lib=',cycles_lib)
+            #print('Service time is',stime,'broken into private=',cycles_private/2,'and lib=',cycles_lib/2)
         else:
             stime = ((self.W/self.InstWidth) * self.max_cpi)/2
 
