@@ -53,13 +53,6 @@ class StaticUServiceTime(uServiceFunctionTimeABC):
 
         return stime
 
-        #fix = exponential(self.T)
-        # Number of expected misses
-        #prob_miss = 1-min(1,self.S_cache/(self.W * self.Nf))
-        #num_trials = (self.T * 2) / self.InstPacking / (self.L + 1)
-        #exp_num_misses = prob_miss * num_trials
-        #inst_stalls_cycles = (self.LLCLat * exp_num_misses)
-
 # This class calculates its service times dynamically, to go along with affinity-based
 # dispatch. The choice is based on the past N unique functions that were dispatched to
 # this class generator. If N is > the thrash-hold, then the func pays a higher cost.
