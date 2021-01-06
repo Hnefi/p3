@@ -42,10 +42,10 @@ class FunctionMissModel(object):
         aggregate_size = 0
         funcs_in_cache = []
         # Account for functions in reverse from the incoming function queue.
-        aggregate_size, funcs_in_cache = add_to_cache_state(aggregate_size,funcs_in_cache,self.incoming_funcs)
+        aggregate_size, funcs_in_cache = self.add_to_cache_state(aggregate_size,funcs_in_cache,self.incoming_funcs)
 
         # If still not enough, add functions from the outgoing function queue
-        aggregate_size, funcs_in_cache = add_to_cache_state(aggregate_size,funcs_in_cache,self.func_history)
+        aggregate_size, funcs_in_cache = self.add_to_cache_state(aggregate_size,funcs_in_cache,self.func_history)
 
         return funcs_in_cache
 
