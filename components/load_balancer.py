@@ -3,7 +3,7 @@
 from .end_measure import EndOfMeasurements
 from my_simpy.src.simpy import Environment,Interrupt
 from my_simpy.src.simpy.resources.store import Store
-from .dispatch_policies import RandomDispatchPolicy,JBSQDispatchPolicy
+from components.dispatch_policies.base_policies import RandomDispatchPolicy,JBSQDispatchPolicy
 
 # Python base package includes
 from random import randint
@@ -19,11 +19,15 @@ class LoadBalancer(object):
         self.worker_qs = disp_queues
         self.lgen_to_interrupt = lgen_to_interrupt
         self.killed = False
+        self.core_list = None
         if dp is None:
             self.dispatch_policy = RandomDispatchPolicy(len(disp_queues))
         else:
             self.dispatch_policy = dp
         self.action = self.env.process(self.run())
+
+    def set_cores(self,corelist):
+        self.core_list = corelist
 
     def endSimGraceful(self):
         try:
@@ -48,7 +52,14 @@ class LoadBalancer(object):
                 self.endSimGraceful()
                 continue
 
-            # Dispatch it
+            # Select q
             req.dispatch_time = self.env.now
             queue_num,the_queue = self.selectQueue(req)
+
+            # Notify cores of dispatch (if present)
+            if self.core_list is not None:
+                self.core_list[queue_num].new_dispatch(req.getFuncType())
+
+            # Dispatch and move on
             yield the_queue.put(req)
+

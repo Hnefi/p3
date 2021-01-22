@@ -13,8 +13,8 @@ class AbstractLoadGen(object):
     def __init__(self):
         pass
 
-## A class which serves as a Poisson load generator.
-class PoissonLoadGen(AbstractLoadGen):
+## A class which serves as a Poisson load generator. (Open loop)
+class OpenPoissonLoadGen(AbstractLoadGen):
     def __init__(self,simpy_env,out_queue,num_events,key_obj,incoming_load_A,writes):
         super().__init__()
         self.env = simpy_env

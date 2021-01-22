@@ -27,8 +27,20 @@ class FuncRequest(AbstractRequest):
         self.num = rpc_number
         self.func_type = f_type
 
+    def getFuncID(self):
+        return self.num
+
     def getFuncType(self):
         return self.func_type
+
+## Class that models a function request whose service time is pre-defined
+class FuncRequestWithServTime(FuncRequest):
+    def __init__(self,rpc_number,f_type,serv_time):
+        super().__init__(rpc_number,f_type)
+        self.serv_time = serv_time
+
+    def getServiceTime(self):
+        return self.serv_time
 
 ## A class that models an RPC request
 class RPCRequest(AbstractRequest):

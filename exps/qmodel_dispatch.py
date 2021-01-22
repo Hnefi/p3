@@ -5,8 +5,9 @@
 from components.load_balancer import LoadBalancer
 from components.userv_loadgen  import uServLoadGen
 from components.rpc_core import uServCore
-from components.serv_times.userv_function import uServiceFunctionTime
-from components.dispatch_policies import JBSQDispatchPolicy, FunctionDispatch
+from components.serv_times.exp_generator import ExpServTimeGenerator
+from components.dispatch_policies.base_policies import JBSQDispatchPolicy
+from components.dispatch_policies.func_policies import FunctionDispatch
 
 # simpy includes
 from my_simpy.src.simpy import Environment
@@ -24,7 +25,7 @@ def run_exp(arg_string):
     parser.add_argument('-G','--FunctionGrouping',type=int,help="Number of functions to assign to a core. Default = number of cores",default=0)
     parser.add_argument('-J','--CoreGrouping',type=int,help="Number of cores to assign to each function group. Default = 1",default=1)
     parser.add_argument('-N','--NumFunctions',type=int,help="Number of functions total. Default = 8",default=8)
-    parser.add_argument('-T','--FixedTime',type=int,help="Fixed service time which cores always consume (ns). Default = 1000",default=1000)
+    parser.add_argument('-T','--FixedTime',type=float,help="Fixed service time which cores always consume. Default = 1000",default=1000)
     parser.add_argument('-W','--WorkingSet',type=int,help="Working set size of a function (KB). Default = 32",default=32*1024)
     parser.add_argument('-S','--CacheSize',type=int,help="Size of an L1 cache. Default = 32",default=32*1024)
     parser.add_argument('-L','--CoreLookahead',type=int,help="Cache block lookahead that the CPU can attain. Default = 1",default=1)
@@ -40,7 +41,7 @@ def run_exp(arg_string):
     env = Environment()
 
     # Make latency store from 100ns to 100000ns, precision of 0.01%
-    latency_store = HdrHistogram(100,100000,4)
+    latency_store = HdrHistogram(0.1,100,4)
 
     event_queue = Store(env) # to pass incoming load from generator to balancer
 
@@ -66,7 +67,8 @@ def run_exp(arg_string):
     # - lookahead to assume
     # - L1 cache size
     # - number of functions assigned to a core
-    fmu_gen = uServiceFunctionTime(args.FixedTime,args.WorkingSet,args.CoreLookahead,args.CacheSize,FuncGrouping)
+    #fmu_gen = uServiceFunctionTime(args.FixedTime,args.WorkingSet,args.CoreLookahead,args.CacheSize,FuncGrouping)
+    fmu_gen = ExpServTimeGenerator(args.FixedTime)
 
     totalcs = 0
     # For each function group, assign the specified number of cores to it
@@ -84,5 +86,5 @@ def run_exp(arg_string):
     rd = {}
     percentiles = [ 50, 95, 99, 99.9 ]
     for p in percentiles:
-        rd[p] = float(latency_store.get_value_at_percentile(p)) / 1000 # return in us
+        rd[p] = float(latency_store.get_value_at_percentile(p)) #/ 1000 # return in us
     return rd

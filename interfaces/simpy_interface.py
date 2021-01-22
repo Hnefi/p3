@@ -47,7 +47,7 @@ class SimpyInterface(Process):
             if 'numservs' in self.mode:
                 addMe = '-k ' + str(job_id)
                 strToPass += addMe
-            else:
+            elif 'sweep_A' in self.mode:
                 addMe = '-a ' + str(job_id)
                 strToPass += addMe
                 # TODO: Legacy job_id is a bandwidth

@@ -2,6 +2,8 @@
 ## Author: Mark Sutherland, (C) 2020
 from .serv_times.exp_generator import ExpServTimeGenerator
 from .serv_times.userv_function import DynamicUServTime
+from .requests import PullFeedbackRequest
+from .end_measure import EndOfMeasurements
 
 class AbstractCore(object):
     def __init__(self,core_id,lgen_to_interrupt):
@@ -29,6 +31,13 @@ class AbstractCore(object):
         if all(timeGreaterThanThresholdList) is True:
             return True
         return False
+
+    def endSimGraceful(self):
+        try:
+            self.lgen_to_interrupt.action.interrupt("end of sim")
+        except RuntimeError as e:
+            print('Caught exception',e,'lets transparently ignore it')
+        self.killed = True
 
     def endSimUnstable(self):
         if self.isMaster is True:
@@ -73,24 +82,33 @@ class uServCore(AbstractCore):
             self.numSimulated += 1
 
 class DynamicUServCore(AbstractCore):
-    def __init__(self,simpy_env,core_id,request_queue,measurement_store,lgen_to_interrupt,WorkingSet,FuncGrouping,funcs_per_btb,library_fraction):
+    def __init__(self,simpy_env,core_id,request_queue,measurement_store,lgen_to_interrupt,WorkingSet,cache_size,hist_len,closed_loop=False):
         super().__init__(core_id,lgen_to_interrupt)
         self.env = simpy_env
         self.id = core_id
         self.in_q = request_queue
         self.latency_store = measurement_store
+        self.is_closed_loop = closed_loop
         # Import service time generator
         from .serv_times.userv_function import DynamicUServTime
 
-        self.stime_gen = DynamicUServTime(workset=WorkingSet,num_functions=FuncGrouping,
-                                       func_thrashing_boundary=funcs_per_btb,library_fraction=library_fraction)
+        self.stime_gen = DynamicUServTime(WorkingSet,cache_size,hist_len)
         self.killed = False
         self.action = self.env.process(self.run())
         self.numSimulated = 0
 
+
     def run(self):
         while self.killed is False:
+            if self.is_closed_loop is True:
+                # Put a pull req in the queue
+                yield self.in_q.put(PullFeedbackRequest(self.id))
+
             rpc = yield self.in_q.get()
+
+            if isinstance(rpc,EndOfMeasurements):
+                self.endSimGraceful()
+                continue
 
             rpcNumber = rpc.num
             rpc.start_proc_time = self.env.now
@@ -104,12 +122,19 @@ class DynamicUServCore(AbstractCore):
             total_time = rpc.getTotalServiceTime()
             self.latency_store.record_value(total_time)
             self.putSTime(total_time)
+            self.stime_gen.func_executed(rpc.getFuncType())
 
             if self.isMaster is True and self.isSimulationUnstable() is True:
                 print('Simulation was unstable, last five service times from core 0 were:',self.lastFiveSTimes,', killing sim.')
                 self.endSimUnstable()
+
             self.numSimulated += 1
 
+    def peek_stime(self,func_id):
+        return self.stime_gen.get(func_id)
+
+    def new_dispatch(self,func_id):
+        return self.stime_gen.new_dispatch(func_id)
 
 class RPCCore(AbstractCore):
     def __init__(self,simpy_env,core_id,request_queue,measurement_store,rd_gen,wr_gen,lgen_to_interrupt):

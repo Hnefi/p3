@@ -9,7 +9,7 @@ from components.zipf_gen import ZipfKeyGenerator
 def main():
     # Add to dictionary the function popularities assumed (use a zipf for now)
     NUM_FUNCTIONS = 16
-    zargs = { 'num_items' : NUM_FUNCTIONS, 'coeff' : 0.9}
+    zargs = { 'num_items' : NUM_FUNCTIONS, 'coeff' : 0}
     zgen = ZipfKeyGenerator(**zargs)
     pdf_array = [ zgen.prob_for_rank(i) for i in range(NUM_FUNCTIONS) ]
     shuffle(pdf_array)
@@ -20,20 +20,10 @@ def main():
             ostring += str(x) + " "
         return ostring
 
-    invokerArgs = {'runnableTarg' : 'qmodel_dispatch_nonuniform',
-            'RequestsToSimulate' : 100000,
-            'FuncPopularities' : make_string_from_pop_list(pdf_array),
-            'FunctionGrouping': 16,
-            #'FunctionGrouping': 4,
-            'NumWorkers' : 16,
-            'CoreGrouping' : 1,
-            #'CoreGrouping' : 4,
-            'NumFunctions' : NUM_FUNCTIONS,
+    invokerArgs = {'runnableTarg' : 'serv_time_predictor',
             'argrange' : linspace(350,1000,1),
-            'mode' : 'sweep_A',
-            'UseAffinity' : '',
-            'WorkingSet' : 24*1024,
-            'numProcs': 2}
+            'mode' : 'file_based',
+            'numProcs': 1}
     threadController = Invoker( **invokerArgs )
 
     threadController.startProcs()
