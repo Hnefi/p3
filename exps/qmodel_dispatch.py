@@ -8,6 +8,7 @@ from components.rpc_core import uServCore
 from components.serv_times.exp_generator import ExpServTimeGenerator
 from components.dispatch_policies.base_policies import JBSQDispatchPolicy
 from components.dispatch_policies.func_policies import FunctionDispatch
+from components.latency_store import ExactLatStore
 
 # simpy includes
 from my_simpy.src.simpy import Environment
@@ -41,7 +42,8 @@ def run_exp(arg_string):
     env = Environment()
 
     # Make latency store from 100ns to 100000ns, precision of 0.01%
-    latency_store = HdrHistogram(0.1,100,4)
+    #latency_store = HdrHistogram(1,1000,3)
+    latency_store = ExactLatStore()
 
     event_queue = Store(env) # to pass incoming load from generator to balancer
 
@@ -84,7 +86,10 @@ def run_exp(arg_string):
 
     # Get results
     rd = {}
-    percentiles = [ 50, 95, 99, 99.9 ]
+    percentiles = [ 95, 99, 99.9 ]
     for p in percentiles:
         rd[p] = float(latency_store.get_value_at_percentile(p)) #/ 1000 # return in us
+
+    # Get average
+    rd[50] = float(latency_store.get_mean())
     return rd
